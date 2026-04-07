@@ -29,6 +29,7 @@ credentials/
 
 # === API keys & config met gevoelige data ===
 config.local.*
+!config.local.example.py
 *.local.json
 *.local.yaml
 *.local.yml

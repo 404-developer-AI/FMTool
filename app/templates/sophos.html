@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Sophos Connection{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Sophos XGS Connection</h1>
+</div>
+
+<div class="sophos-grid">
+    <!-- Connection Status -->
+    <div class="card sophos-status-card">
+        <h3>Connection Status</h3>
+        {% if configured %}
+        <p class="card-detail">Host: <strong>{{ host }}:{{ port }}</strong></p>
+        <div class="connection-actions">
+            <button class="btn btn-primary" id="test-connection-btn">Test Connection</button>
+        </div>
+        <div id="connection-result" class="connection-result" style="display: none;"></div>
+        {% else %}
+        <p class="card-status pending">Not configured</p>
+        <p class="card-detail">
+            Sophos API credentials are not set. Create a <code>config.local.py</code> file
+            with your Sophos XGS credentials. See the setup guide below.
+        </p>
+        {% endif %}
+        <div class="ssl-warning">
+            <strong>Note:</strong> Connection uses self-signed certificate (SSL verification disabled).
+            This is normal for local Sophos XGS firewalls.
+        </div>
+    </div>
+
+    <!-- Existing Sophos Objects -->
+    {% if configured %}
+    <div class="card sophos-objects-card">
+        <h3>Existing Sophos Configuration</h3>
+        <p class="card-detail">
+            Fetch the current configuration from your Sophos XGS to see existing objects.
+            This is used for duplicate detection during migration.
+        </p>
+        <div class="connection-actions">
+            <button class="btn" id="fetch-objects-btn">Fetch Configuration</button>
+        </div>
+        <div id="objects-grid" class="objects-grid" style="display: none;"></div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Setup Guide -->
+<div class="card setup-guide-card">
+    <h3>Setup Guide: Enable Sophos XGS API</h3>
+    <p class="card-detail">Follow these steps to enable the REST API on your Sophos XGS firewall.</p>
+
+    <div class="setup-guide">
+        <div class="setup-step">
+            <span class="step-number">1</span>
+            <div class="step-content">
+                <strong>Log in to the Sophos XGS web console</strong>
+                <p>Open <code>https://&lt;firewall-ip&gt;:4444</code> in your browser and log in with an administrator account.</p>
+            </div>
+        </div>
+
+        <div class="setup-step">
+            <span class="step-number">2</span>
+            <div class="step-content">
+                <strong>Navigate to API settings</strong>
+                <p>Go to <strong>Backup &amp; Firmware &gt; API</strong> (or <strong>Administration &gt; API</strong> depending on your firmware version).</p>
+            </div>
+        </div>
+
+        <div class="setup-step">
+            <span class="step-number">3</span>
+            <div class="step-content">
+                <strong>Enable API access</strong>
+                <p>Toggle the <strong>API Configuration</strong> switch to enable the REST API.</p>
+            </div>
+        </div>
+
+        <div class="setup-step">
+            <span class="step-number">4</span>
+            <div class="step-content">
+                <strong>Set allowed IP address</strong>
+                <p>Add the IP address of the machine running FMTool to the allowed source IP list. This restricts API access to your workstation.</p>
+            </div>
+        </div>
+
+        <div class="setup-step">
+            <span class="step-number">5</span>
+            <div class="step-content">
+                <strong>Create an API admin user</strong>
+                <p>Go to <strong>Authentication &gt; Users</strong> and create a dedicated user with <strong>Administrator</strong> privileges for API access.</p>
+            </div>
+        </div>
+
+        <div class="setup-step">
+            <span class="step-number">6</span>
+            <div class="step-content">
+                <strong>Configure FMTool credentials</strong>
+                <p>Copy <code>config.local.example.py</code> to <code>config.local.py</code> in the FMTool root directory and fill in your credentials:</p>
+                <pre class="code-block">SOPHOS_HOST = "192.168.1.1"
+SOPHOS_USERNAME = "api-admin"
+SOPHOS_PASSWORD = "your-password"
+SOPHOS_PORT = 4444</pre>
+            </div>
+        </div>
+
+        <div class="setup-step">
+            <span class="step-number">7</span>
+            <div class="step-content">
+                <strong>Restart FMTool</strong>
+                <p>Stop and restart the FMTool application to load the new credentials. Then use the <strong>Test Connection</strong> button above to verify.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="ssl-warning" style="margin-top: 1rem;">
+        <strong>Rate limiting:</strong> The Sophos API is rate-limited. FMTool handles this automatically with retry logic,
+        but avoid running multiple instances simultaneously.
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/sophos.js') }}"></script>
+{% endblock %}

@@ -739,3 +739,159 @@ a:hover {
     margin-bottom: 1rem;
     font-size: 1.1rem;
 }
+
+/* === Sophos Page === */
+.sophos-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.sophos-status-card .card-detail {
+    margin-bottom: 1rem;
+}
+
+.sophos-status-card code {
+    background: var(--color-surface-alt);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+}
+
+.connection-actions {
+    margin-bottom: 1rem;
+}
+
+.connection-result {
+    margin-top: 1rem;
+}
+
+.result-success {
+    background: rgba(46, 204, 113, 0.1);
+    border: 1px solid var(--color-success);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    color: var(--color-success);
+}
+
+.result-error {
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid var(--color-error);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    color: var(--color-error);
+}
+
+.ssl-warning {
+    background: rgba(52, 152, 219, 0.1);
+    border: 1px solid var(--color-pending);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+/* Objects Grid */
+.objects-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.object-card {
+    background: var(--color-surface-alt);
+    border-radius: var(--radius);
+    padding: 0.75rem;
+    text-align: center;
+    border: 1px solid var(--color-border);
+}
+
+.object-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    margin-bottom: 0.25rem;
+}
+
+.count-value {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.count-error {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--color-error);
+}
+
+/* Setup Guide */
+.setup-guide-card {
+    margin-bottom: 1.5rem;
+}
+
+.setup-guide {
+    margin-top: 1rem;
+}
+
+.setup-step {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+    align-items: flex-start;
+}
+
+.step-number {
+    flex-shrink: 0;
+    width: 2rem;
+    height: 2rem;
+    background: var(--color-primary);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.9rem;
+}
+
+.step-content {
+    flex: 1;
+}
+
+.step-content p {
+    margin-top: 0.25rem;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+}
+
+.step-content code {
+    background: var(--color-surface-alt);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.code-block {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-top: 0.5rem;
+    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-size: 0.85rem;
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.page-header {
+    margin-bottom: 1.5rem;
+}
+
+.page-header h1 {
+    font-size: 1.6rem;
+}

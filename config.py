@@ -8,3 +8,9 @@ class Config:
     DATABASE_PATH = os.path.join(BASE_DIR, "instance", "fmtool.db")
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "instance", "uploads")
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50 MB max upload
+
+    # Sophos XGS API (override in config.local.py)
+    SOPHOS_HOST = None
+    SOPHOS_USERNAME = None
+    SOPHOS_PASSWORD = None
+    SOPHOS_PORT = 4444

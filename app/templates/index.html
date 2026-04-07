@@ -21,10 +21,11 @@
         <a href="{{ url_for('upload.upload_page') }}" class="btn btn-small btn-primary">Import Backup</a>
         {% endif %}
     </div>
-    <div class="card">
+    <div class="card" id="sophos-card">
         <h3>Sophos Connection</h3>
-        <p class="card-status pending">Not configured</p>
-        <p class="card-detail">Configure Sophos XGS API credentials.</p>
+        <p class="card-status pending" id="sophos-status">Checking...</p>
+        <p class="card-detail" id="sophos-detail">Checking connection status...</p>
+        <a href="{{ url_for('sophos.sophos_page') }}" class="btn btn-small" id="sophos-btn">Configure</a>
     </div>
     <div class="card">
         <h3>Migration</h3>
@@ -77,4 +78,44 @@
     </div>
 </div>
 {% endif %}
+
+<script>
+(function() {
+    var status = document.getElementById("sophos-status");
+    var detail = document.getElementById("sophos-detail");
+    var btn = document.getElementById("sophos-btn");
+    if (!status) return;
+
+    fetch("{{ url_for('sophos.connection_status') }}")
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (!data.configured) {
+                status.textContent = "Not configured";
+                status.className = "card-status pending";
+                detail.textContent = "Configure Sophos XGS API credentials.";
+                btn.textContent = "Configure";
+                btn.classList.add("btn-primary");
+            } else if (data.connected) {
+                status.textContent = "Connected";
+                status.className = "card-status migrated";
+                var info = [];
+                if (data.firmware_version) info.push("Firmware: " + data.firmware_version);
+                if (data.model) info.push("Model: " + data.model);
+                detail.textContent = info.length ? info.join(" — ") : "Connection OK";
+                btn.textContent = "View Details";
+            } else {
+                status.textContent = "Connection failed";
+                status.className = "card-status failed";
+                detail.textContent = data.message || "Check configuration.";
+                btn.textContent = "Fix Configuration";
+                btn.classList.add("btn-primary");
+            }
+        })
+        .catch(function() {
+            status.textContent = "Not configured";
+            status.className = "card-status pending";
+            detail.textContent = "Configure Sophos XGS API credentials.";
+        });
+})();
+</script>
 {% endblock %}
