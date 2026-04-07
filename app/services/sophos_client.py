@@ -261,17 +261,16 @@ def get_interface_details(app_config):
         if not name:
             continue
 
-        # Extract IPv4 address — try common field names
-        ip = (item.get("IPv4Address") or item.get("IPAddress")
-              or item.get("IPv4Configuration", {}).get("IPAddress", "")
-              if isinstance(item.get("IPv4Configuration"), dict) else "")
+        # Extract IPv4 address
+        ip = item.get("IPAddress") or ""
 
         # Extract zone
-        zone = item.get("Zone", "")
+        zone = item.get("NetworkZone", "")
 
-        # Extract alias IPs — try common structures
+        # Extract alias IPs from various possible structures
         alias_ips = []
-        for alias_key in ("IPv4Alias", "AliasIPv4", "AliasList", "AddressAlias"):
+        for alias_key in ("IPv4Alias", "AliasIPv4", "AliasList", "AddressAlias",
+                          "AdditionalIPv4Address", "IPv4AliasAddress"):
             alias_data = item.get(alias_key)
             if not alias_data:
                 continue
