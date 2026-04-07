@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Import{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Import pfSense Backup</h1>
+    <p>Upload a pfSense XML backup file to parse and store the configuration.</p>
+</div>
+
+<!-- Flash messages -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}
+<div class="flash-messages">
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endwith %}
+
+<!-- Upload form -->
+<div class="card upload-card">
+    <form id="upload-form" action="{{ url_for('upload.upload_file') }}" method="post" enctype="multipart/form-data">
+        <div id="drop-zone" class="drop-zone">
+            <p class="drop-zone-text">Drag &amp; drop a pfSense XML backup here</p>
+            <p class="drop-zone-sub">or click to browse</p>
+            <input type="file" name="file" id="file-input" accept=".xml" class="file-input">
+        </div>
+        <div id="file-info" class="file-info" style="display: none;">
+            <span id="file-name"></span>
+            <button type="button" id="clear-file" class="btn btn-small btn-secondary">Clear</button>
+        </div>
+        <button type="submit" id="upload-btn" class="btn btn-primary" disabled>Upload &amp; Import</button>
+    </form>
+
+    <div class="info-callout">
+        <strong>Re-import:</strong> If you upload an updated backup from the same firewall,
+        existing items will be updated and new items will be added. Migration status is preserved.
+    </div>
+</div>
+
+{% if summary %}
+<!-- Import summary -->
+<div class="card summary-card">
+    <h2>Current Import</h2>
+    <div class="summary-meta">
+        <p><strong>File:</strong> {{ summary.import.filename }}</p>
+        <p><strong>Firewall:</strong> {{ summary.import.hostname }}.{{ summary.import.domain }}</p>
+        <p><strong>pfSense version:</strong> {{ summary.import.pfsense_version }}</p>
+        <p><strong>Last import:</strong> {{ summary.import.imported_at[:19] }}</p>
+        <p><strong>Total items:</strong> {{ summary.total }}</p>
+    </div>
+
+    <table class="summary-table">
+        <thead>
+            <tr>
+                <th>Category</th>
+                <th>Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in summary.counts %}
+            {% if item.count > 0 %}
+            <tr>
+                <td>{{ item.label }}</td>
+                <td>{{ item.count }}</td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Cleanup -->
+<div class="card cleanup-card">
+    <h2>Cleanup</h2>
+    <p>Remove all imported data and uploaded files. This cannot be undone.</p>
+    <form id="cleanup-form" action="{{ url_for('upload.cleanup') }}" method="post">
+        <button type="button" id="cleanup-btn" class="btn btn-danger">Delete All Data</button>
+    </form>
+</div>
+{% endif %}
+
+<!-- Confirm dialog for new backup -->
+<div id="confirm-dialog" class="modal" style="display: none;">
+    <div class="modal-content">
+        <h3>Different Firewall Detected</h3>
+        <p id="confirm-message"></p>
+        <div class="modal-actions">
+            <button id="confirm-yes" class="btn btn-danger">Yes, delete and import</button>
+            <button id="confirm-no" class="btn btn-secondary">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const fileInfo = document.getElementById('file-info');
+    const fileName = document.getElementById('file-name');
+    const clearFile = document.getElementById('clear-file');
+    const uploadBtn = document.getElementById('upload-btn');
+    const uploadForm = document.getElementById('upload-form');
+    const cleanupBtn = document.getElementById('cleanup-btn');
+    const confirmDialog = document.getElementById('confirm-dialog');
+
+    // Drop zone click
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    // Drag and drop
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files;
+            updateFileInfo();
+        }
+    });
+
+    // File input change
+    fileInput.addEventListener('change', updateFileInfo);
+
+    function updateFileInfo() {
+        if (fileInput.files.length) {
+            const file = fileInput.files[0];
+            if (!file.name.toLowerCase().endsWith('.xml')) {
+                showToast('Only XML files are accepted.', 'error');
+                fileInput.value = '';
+                return;
+            }
+            fileName.textContent = file.name + ' (' + formatSize(file.size) + ')';
+            fileInfo.style.display = 'flex';
+            dropZone.style.display = 'none';
+            uploadBtn.disabled = false;
+        }
+    }
+
+    clearFile.addEventListener('click', () => {
+        fileInput.value = '';
+        fileInfo.style.display = 'none';
+        dropZone.style.display = 'flex';
+        uploadBtn.disabled = true;
+    });
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+
+    // Upload form — handle JSON response for confirm dialog
+    uploadForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        uploadBtn.disabled = true;
+        uploadBtn.textContent = 'Importing...';
+
+        const formData = new FormData(uploadForm);
+        try {
+            const response = await fetch(uploadForm.action, {
+                method: 'POST',
+                body: formData,
+            });
+
+            const contentType = response.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                const data = await response.json();
+                if (data.confirm_needed) {
+                    document.getElementById('confirm-message').textContent = data.message;
+                    confirmDialog.style.display = 'flex';
+                    confirmDialog.dataset.filename = data.filename;
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Upload & Import';
+                    return;
+                }
+            }
+
+            // Regular redirect response — follow it
+            window.location.href = response.url;
+        } catch (err) {
+            showToast('Upload failed: ' + err.message, 'error');
+            uploadBtn.disabled = false;
+            uploadBtn.textContent = 'Upload & Import';
+        }
+    });
+
+    // Confirm dialog buttons
+    if (confirmDialog) {
+        document.getElementById('confirm-yes').addEventListener('click', async function() {
+            confirmDialog.style.display = 'none';
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Importing...';
+
+            const formData = new FormData();
+            formData.append('filename', confirmDialog.dataset.filename);
+
+            try {
+                const response = await fetch('{{ url_for("upload.confirm_new_backup") }}', {
+                    method: 'POST',
+                    body: formData,
+                });
+                window.location.href = response.url;
+            } catch (err) {
+                showToast('Import failed: ' + err.message, 'error');
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Upload & Import';
+            }
+        });
+
+        document.getElementById('confirm-no').addEventListener('click', function() {
+            confirmDialog.style.display = 'none';
+        });
+    }
+
+    // Cleanup confirmation
+    if (cleanupBtn) {
+        cleanupBtn.addEventListener('click', function() {
+            if (confirm('This will permanently delete all imported data and uploaded files. Are you sure?')) {
+                document.getElementById('cleanup-form').submit();
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

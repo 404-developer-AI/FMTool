@@ -11,8 +11,15 @@
 <div class="status-cards">
     <div class="card">
         <h3>Import</h3>
+        {% if summary %}
+        <p class="card-status migrated">Imported</p>
+        <p class="card-detail">{{ summary.import.hostname }}.{{ summary.import.domain }} — {{ summary.total }} items</p>
+        <a href="{{ url_for('upload.upload_page') }}" class="btn btn-small">View Details</a>
+        {% else %}
         <p class="card-status pending">No backup imported</p>
         <p class="card-detail">Upload a pfSense XML backup to get started.</p>
+        <a href="{{ url_for('upload.upload_page') }}" class="btn btn-small btn-primary">Import Backup</a>
+        {% endif %}
     </div>
     <div class="card">
         <h3>Sophos Connection</h3>
@@ -21,8 +28,13 @@
     </div>
     <div class="card">
         <h3>Migration</h3>
+        {% if summary %}
+        <p class="card-status pending">Ready to migrate</p>
+        <p class="card-detail">Connect to Sophos to begin migration.</p>
+        {% else %}
         <p class="card-status pending">Waiting for import</p>
         <p class="card-detail">Import a backup and connect to Sophos to begin.</p>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

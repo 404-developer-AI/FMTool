@@ -17,9 +17,16 @@ def create_app():
     os.makedirs(app.config["DATABASE_PATH"].rsplit(os.sep, 1)[0], exist_ok=True)
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
+    # Initialize database
+    from app.models.database import init_db
+
+    init_db(app.config["DATABASE_PATH"])
+
     # Register blueprints
     from app.routes.main import main_bp
+    from app.routes.upload import upload_bp
 
     app.register_blueprint(main_bp)
+    app.register_blueprint(upload_bp)
 
     return app
