@@ -230,13 +230,19 @@ def get_existing_fw_rule_names(app_config):
 
 
 def get_interface_details(app_config):
-    """Fetch Sophos interface details including IPs and aliases.
+    """Fetch Sophos interface details including IPs and interface aliases.
+
+    Interface aliases are a separate API object ('Alias' tag) linked by hardware name.
+    Sophos firewall rules accept #InterfaceName and #AliasName as destination networks.
 
     Returns:
         list: List of dicts with interface info:
-              [{"name": "Port1", "zone": "WAN", "ip": "1.2.3.4", "alias_ips": ["1.2.3.5"]}]
+              [{"name": "Port1_WAN", "hardware": "Port1", "zone": "WAN",
+                "ip": "1.2.3.4", "alias_ips": [{"name": "Port1:0", "ip": "1.2.3.5"}]}]
     """
     client = get_client(app_config)
+
+    # Fetch interfaces
     try:
         response = _retry_on_rate_limit(client.get_interface)
     except SophosFirewallZeroRecords:
@@ -253,6 +259,28 @@ def get_interface_details(app_config):
         return []
 
     items = data if isinstance(data, list) else [data]
+
+    # Fetch interface aliases (separate 'Alias' API tag)
+    alias_by_hardware = {}
+    try:
+        alias_resp = _retry_on_rate_limit(client.get_tag, "Alias")
+        alias_data = alias_resp.get("Response", {}).get("Alias", [])
+        if isinstance(alias_data, dict):
+            alias_data = [alias_data]
+        for a in alias_data:
+            if not isinstance(a, dict):
+                continue
+            hw = a.get("Interface", "")
+            aip = a.get("IPAddress", "")
+            aname = a.get("Name", "")
+            if hw and aip:
+                alias_by_hardware.setdefault(hw, []).append({
+                    "name": aname,
+                    "ip": aip,
+                })
+    except (SophosFirewallZeroRecords, SophosFirewallAPIError, Exception) as e:
+        logger.warning("Failed to fetch interface aliases: %s", e)
+
     interfaces = []
     for item in items:
         if not isinstance(item, dict):
@@ -261,36 +289,14 @@ def get_interface_details(app_config):
         if not name:
             continue
 
-        # Extract IPv4 address
         ip = item.get("IPAddress") or ""
-
-        # Extract zone
         zone = item.get("NetworkZone", "")
-
-        # Extract alias IPs from various possible structures
-        alias_ips = []
-        for alias_key in ("IPv4Alias", "AliasIPv4", "AliasList", "AddressAlias",
-                          "AdditionalIPv4Address", "IPv4AliasAddress"):
-            alias_data = item.get(alias_key)
-            if not alias_data:
-                continue
-            if isinstance(alias_data, str):
-                alias_ips.append(alias_data)
-            elif isinstance(alias_data, list):
-                for a in alias_data:
-                    if isinstance(a, str):
-                        alias_ips.append(a)
-                    elif isinstance(a, dict):
-                        aip = a.get("IPAddress") or a.get("Address") or a.get("IP", "")
-                        if aip:
-                            alias_ips.append(aip)
-            elif isinstance(alias_data, dict):
-                aip = alias_data.get("IPAddress") or alias_data.get("Address") or alias_data.get("IP", "")
-                if aip:
-                    alias_ips.append(aip)
+        hardware = item.get("Hardware", "")
+        alias_ips = alias_by_hardware.get(hardware, [])
 
         interfaces.append({
             "name": name,
+            "hardware": hardware,
             "zone": zone,
             "ip": ip,
             "alias_ips": alias_ips,

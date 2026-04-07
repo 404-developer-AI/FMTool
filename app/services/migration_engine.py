@@ -620,11 +620,11 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     log_enabled = rule_row.get("log", 0)
     sophos_log = "Enable" if log_enabled else "Disable"
 
-    # Build rule_params
+    # Build rule_params (Position/After must be capitalized per SDK template)
     rule_params = {
         "rulename": sophos_name,
         "status": sophos_status,
-        "position": "after" if prev_rule_name else "bottom",
+        "position": "After" if prev_rule_name else "Bottom",
         "action": sophos_action,
         "description": descr[:200],
         "log": sophos_log,

@@ -147,18 +147,19 @@
         dstNetworkSelect.innerHTML = '<option value="">(per rule)</option>';
 
         for (const iface of sophosInterfaces) {
-            // Main interface IP
+            const zoneSuffix = iface.zone ? ` (${iface.zone})` : '';
+            // Main interface — use #Name as Sophos reference
             if (iface.ip) {
                 const opt = document.createElement('option');
-                opt.value = iface.ip;
-                opt.textContent = `${iface.name} - ${iface.ip}${iface.zone ? ' (' + iface.zone + ')' : ''}`;
+                opt.value = '#' + iface.name;
+                opt.textContent = `#${iface.name} - ${iface.ip}${zoneSuffix}`;
                 dstNetworkSelect.appendChild(opt);
             }
-            // Alias IPs
-            for (const aip of (iface.alias_ips || [])) {
+            // Alias IPs — use #AliasName as Sophos reference
+            for (const alias of (iface.alias_ips || [])) {
                 const opt = document.createElement('option');
-                opt.value = aip;
-                opt.textContent = `${iface.name} alias - ${aip}${iface.zone ? ' (' + iface.zone + ')' : ''}`;
+                opt.value = '#' + alias.name;
+                opt.textContent = `#${alias.name} - ${alias.ip}${zoneSuffix}`;
                 dstNetworkSelect.appendChild(opt);
             }
         }
