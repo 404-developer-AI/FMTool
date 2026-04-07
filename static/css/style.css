@@ -895,3 +895,307 @@ a:hover {
 .page-header h1 {
     font-size: 1.6rem;
 }
+
+/* ====== Migration Page ====== */
+
+/* Sync status bar */
+.sync-status-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 0.6rem 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.sync-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.sync-icon {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.sync-icon.sync-checking {
+    background: var(--color-warning);
+    animation: sync-pulse 1s infinite;
+}
+
+.sync-icon.sync-done {
+    background: var(--color-success);
+}
+
+.sync-icon.sync-failed {
+    background: var(--color-error);
+}
+
+@keyframes sync-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+.sync-text {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.sync-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.sync-timestamp {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.migrate-controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.select-all-label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.select-all-checkbox,
+.alias-checkbox {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--color-primary);
+    cursor: pointer;
+}
+
+.col-checkbox {
+    width: 2.5rem;
+    text-align: center;
+}
+
+.migrate-table .cell-address {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fqdn-input-wrapper {
+    margin-top: 0.35rem;
+}
+
+.fqdn-input {
+    width: 100%;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.85rem;
+    background: var(--color-surface-alt);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+}
+
+.fqdn-input::placeholder {
+    color: var(--color-text-muted);
+}
+
+.btn-success {
+    background: var(--color-success);
+    color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+    background: #27ae60;
+}
+
+.btn-warning {
+    background: var(--color-warning);
+    color: #1a1a2e;
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: #e67e22;
+}
+
+/* Dry-run panel */
+.dryrun-panel {
+    background: var(--color-surface);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.dryrun-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.dryrun-header h3 {
+    margin: 0;
+}
+
+.dryrun-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.dryrun-item {
+    background: var(--color-surface-alt);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.5rem;
+    border-left: 3px solid var(--color-border);
+}
+
+.dryrun-item.dryrun-create {
+    border-left-color: var(--color-success);
+}
+
+.dryrun-item.dryrun-exists {
+    border-left-color: var(--color-pending);
+}
+
+.dryrun-item.dryrun-skip {
+    border-left-color: var(--color-warning);
+}
+
+.dryrun-item.dryrun-manual {
+    border-left-color: var(--color-text-muted);
+}
+
+.dryrun-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.25rem;
+}
+
+.dryrun-type {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    background: var(--color-bg);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+}
+
+.dryrun-action {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.dryrun-reason {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin-bottom: 0.35rem;
+}
+
+.planned-objects {
+    margin-top: 0.4rem;
+    padding-left: 0.5rem;
+}
+
+.planned-object {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    padding: 0.15rem 0;
+}
+
+.object-type {
+    color: var(--color-pending);
+    font-size: 0.8rem;
+    min-width: 100px;
+}
+
+.object-name {
+    font-family: "Cascadia Code", "Fira Code", monospace;
+    font-size: 0.8rem;
+}
+
+.member-tag {
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    background: var(--color-bg);
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+}
+
+.dryrun-warnings {
+    margin-top: 0.35rem;
+}
+
+.dryrun-warning {
+    font-size: 0.85rem;
+    color: var(--color-warning);
+    padding: 0.15rem 0;
+}
+
+.dryrun-warning::before {
+    content: "\26A0 ";
+}
+
+/* Progress bar */
+.progress-panel {
+    margin-bottom: 1rem;
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 1.25rem;
+    background: var(--color-surface-alt);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.progress-bar {
+    height: 100%;
+    background: var(--color-success);
+    transition: width 0.3s ease;
+    border-radius: var(--radius);
+}
+
+.progress-info {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin-top: 0.35rem;
+}
+
+/* Migration footer */
+.migrate-footer {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border);
+}
+
+/* Virtual IPs instructions */
+.vip-instructions {
+    font-size: 0.85rem;
+    max-width: 350px;
+}
+
+.vip-instructions em {
+    color: var(--color-pending);
+    font-size: 0.8rem;
+}

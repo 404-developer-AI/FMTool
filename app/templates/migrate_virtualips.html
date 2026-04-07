@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Virtual IPs (Manual Migration){% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+    <a href="{{ url_for('main.index') }}">Dashboard</a>
+    <span class="breadcrumb-sep">/</span>
+    <a href="{{ url_for('migrate.migrate_aliases') }}">Migrate Aliases</a>
+    <span class="breadcrumb-sep">/</span>
+    <span>Virtual IPs</span>
+</nav>
+
+<div class="page-header">
+    <h1>Virtual IPs — Manual Migration</h1>
+    <p>{{ vips|length }} virtual IPs — these require manual configuration on Sophos</p>
+</div>
+
+<div class="ssl-warning">
+    <strong>Manual configuration required.</strong>
+    Virtual IPs cannot be migrated via the Sophos API. Follow the instructions below to configure them manually on your Sophos XGS.
+</div>
+
+{% if vips %}
+<div class="migrate-controls">
+    <button class="btn btn-warning" id="btn-skip-all">Mark All as Skipped</button>
+</div>
+
+<div class="detail-table-wrapper">
+    <table class="detail-table">
+        <thead>
+            <tr>
+                <th>Status</th>
+                <th>Mode</th>
+                <th>Interface</th>
+                <th>Subnet</th>
+                <th>Bits</th>
+                <th>Description</th>
+                <th>Sophos Instructions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for vip in vips %}
+            <tr data-status="{{ vip.migration_status or 'pending' }}">
+                <td><span class="status-badge {{ vip.migration_status or 'pending' }}">{{ vip.migration_status or 'pending' }}</span></td>
+                <td>{{ vip.mode or '' }}</td>
+                <td>{{ vip.interface or '' }}</td>
+                <td>{{ vip.subnet or '' }}</td>
+                <td>{{ vip.subnet_bits or '' }}</td>
+                <td>{{ vip.descr or '' }}</td>
+                <td class="vip-instructions">
+                    {% if vip.mode == 'ipalias' %}
+                    Add <strong>{{ vip.subnet }}</strong> as Additional Address on the interface:<br>
+                    <em>Sophos > Network > Interfaces > [interface] > Additional IPv4 Addresses</em>
+                    {% elif vip.mode == 'carp' %}
+                    CARP VIPs require Sophos HA configuration:<br>
+                    <em>Sophos > System > High Availability</em>
+                    {% elif vip.mode == 'proxyarp' %}
+                    Configure as NAT destination address:<br>
+                    <em>Sophos > Rules and Policies > NAT Rules</em>
+                    {% else %}
+                    Review and configure manually on Sophos.
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="no-data">
+    <p>No Virtual IPs imported.</p>
+    <a href="{{ url_for('migrate.migrate_aliases') }}" class="btn btn-primary">Back to Aliases</a>
+</div>
+{% endif %}
+
+<script>
+(function() {
+    const btnSkipAll = document.getElementById('btn-skip-all');
+    if (!btnSkipAll) return;
+
+    btnSkipAll.addEventListener('click', async function() {
+        if (!confirm('Mark all Virtual IPs as skipped?')) return;
+        btnSkipAll.disabled = true;
+        btnSkipAll.textContent = 'Updating...';
+        try {
+            const resp = await fetch('/migrate/virtual-ips/skip', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+            const data = await resp.json();
+            if (data.success) {
+                document.querySelectorAll('.status-badge').forEach(badge => {
+                    badge.className = 'status-badge skipped';
+                    badge.textContent = 'skipped';
+                });
+                if (window.showToast) showToast('All Virtual IPs marked as skipped', 'success');
+            }
+        } catch (e) {
+            if (window.showToast) showToast('Failed to update status', 'error');
+        }
+        btnSkipAll.disabled = false;
+        btnSkipAll.textContent = 'Mark All as Skipped';
+    });
+})();
+</script>
+{% endblock %}

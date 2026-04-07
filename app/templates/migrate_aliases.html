@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Migrate Aliases{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+    <a href="{{ url_for('main.index') }}">Dashboard</a>
+    <span class="breadcrumb-sep">/</span>
+    <span>Migrate Aliases</span>
+</nav>
+
+<div class="page-header">
+    <h1>Migrate Aliases</h1>
+    <p>{{ aliases|length }} aliases — migrate pfSense aliases to Sophos objects</p>
+</div>
+
+{% if not configured %}
+<div class="ssl-warning">
+    <strong>Sophos API not configured.</strong>
+    Configure your Sophos connection in <a href="{{ url_for('sophos.sophos_page') }}">Sophos Settings</a> before migrating.
+</div>
+{% endif %}
+
+{% if configured %}
+<div class="sync-status-bar" id="sync-status-bar">
+    <div class="sync-indicator">
+        <span class="sync-icon" id="sync-icon"></span>
+        <span class="sync-text" id="sync-text">Waiting for Sophos sync...</span>
+    </div>
+    <div class="sync-meta">
+        <span class="sync-timestamp" id="sync-timestamp"></span>
+        <button class="btn btn-small btn-secondary" id="btn-sync-refresh">Refresh</button>
+    </div>
+</div>
+{% endif %}
+
+{% if aliases %}
+<div class="controls-bar">
+    <label class="select-all-label">
+        <input type="checkbox" id="select-all" class="select-all-checkbox">
+        Select all
+    </label>
+    <input type="text" class="search-input" id="search-input" placeholder="Search..." aria-label="Search aliases">
+    <select class="filter-select" id="type-filter" aria-label="Filter by type">
+        <option value="">All types</option>
+    </select>
+    <select class="filter-select" id="status-filter" aria-label="Filter by status">
+        <option value="">All statuses</option>
+    </select>
+    <span class="match-count">Showing <span id="visible-count">{{ aliases|length }}</span> of {{ aliases|length }}</span>
+</div>
+
+<div class="migrate-controls">
+    <button class="btn btn-secondary" id="btn-dryrun" {% if not configured %}disabled{% endif %}>Dry Run</button>
+    <button class="btn btn-success" id="btn-migrate" {% if not configured %}disabled{% endif %}>Migrate Selected</button>
+    <button class="btn btn-warning" id="btn-skip">Skip Selected</button>
+</div>
+
+<div id="dryrun-panel" class="dryrun-panel" style="display:none">
+    <div class="dryrun-header">
+        <h3>Dry Run Results</h3>
+        <div class="dryrun-actions">
+            <button class="btn btn-success btn-small" id="btn-dryrun-execute" {% if not configured %}disabled{% endif %}>Proceed with Migration</button>
+            <button class="btn btn-secondary btn-small" id="btn-dryrun-close">Dismiss</button>
+        </div>
+    </div>
+    <div id="dryrun-results"></div>
+</div>
+
+<div id="progress-panel" class="progress-panel" style="display:none">
+    <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+    </div>
+    <div class="progress-info" id="progress-info">Preparing migration...</div>
+</div>
+
+<div class="detail-table-wrapper">
+    <table class="detail-table migrate-table">
+        <thead>
+            <tr>
+                <th class="col-checkbox"></th>
+                <th class="sortable" data-col="status">Status</th>
+                <th class="sortable" data-col="name">Name</th>
+                <th class="sortable" data-col="type">Type</th>
+                <th class="sortable" data-col="address">Address</th>
+                <th class="sortable" data-col="descr">Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for alias in aliases %}
+            <tr class="migrate-row"
+                data-id="{{ alias.id }}"
+                data-name="{{ alias.name }}"
+                data-type="{{ alias.type or '' }}"
+                data-status="{{ alias.migration_status or 'pending' }}"
+                data-search="{{ alias.migration_status or 'pending' }} {{ alias.name }} {{ alias.type or '' }} {{ alias.address or '' }} {{ alias.descr or '' }}">
+                <td class="col-checkbox">
+                    <input type="checkbox" class="alias-checkbox" value="{{ alias.id }}">
+                </td>
+                <td><span class="status-badge {{ alias.migration_status or 'pending' }}">{{ alias.migration_status or 'pending' }}</span></td>
+                <td>{{ alias.name }}</td>
+                <td>{{ alias.type or '' }}</td>
+                <td class="cell-address">
+                    {{ alias.address or '' }}
+                    {% if alias.type in ('url', 'urltable') %}
+                    <div class="fqdn-input-wrapper">
+                        <input type="text" class="fqdn-input" data-alias="{{ alias.name }}" placeholder="Enter FQDN to map...">
+                    </div>
+                    {% endif %}
+                </td>
+                <td>{{ alias.descr or '' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="migrate-footer">
+    <a href="{{ url_for('migrate.migrate_virtual_ips') }}" class="btn btn-secondary">Virtual IPs (manual)</a>
+</div>
+
+<!-- Confirmation modal -->
+<div id="migrate-modal" class="modal" style="display:none">
+    <div class="modal-content">
+        <h3>Confirm Migration</h3>
+        <p id="modal-message">Are you sure you want to migrate the selected aliases to Sophos?</p>
+        <p id="modal-count"></p>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+            <button class="btn btn-success" id="modal-confirm">Migrate</button>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="no-data">
+    <p>No aliases imported yet.</p>
+    <a href="{{ url_for('upload.upload_page') }}" class="btn btn-primary">Import pfSense Backup</a>
+</div>
+{% endif %}
+
+<script>window.SOPHOS_CONFIGURED = {{ 'true' if configured else 'false' }};</script>
+<script src="{{ url_for('static', filename='js/migrate.js') }}"></script>
+{% endblock %}

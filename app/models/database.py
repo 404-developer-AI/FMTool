@@ -974,6 +974,50 @@ def get_import_summary_with_status(db_path):
     }
 
 
+VALID_STATUSES = ("pending", "migrated", "skipped", "failed")
+
+
+def update_migration_status(db_path, table_name, item_ids, status):
+    """Update migration_status for specific items in a table.
+
+    Validates table_name against DETAIL_TABLES (has_status=True) and status
+    against VALID_STATUSES to prevent SQL injection and invalid data.
+    Returns number of rows updated.
+    """
+    config = DETAIL_TABLES.get(table_name)
+    if not config or not config.get("has_status"):
+        return 0
+    if status not in VALID_STATUSES:
+        return 0
+    if not item_ids:
+        return 0
+
+    conn = get_db(db_path)
+    placeholders = ", ".join("?" for _ in item_ids)
+    cur = conn.execute(
+        f"UPDATE {table_name} SET migration_status = ? WHERE id IN ({placeholders})",
+        [status] + list(item_ids),
+    )
+    conn.commit()
+    updated = cur.rowcount
+    conn.close()
+    return updated
+
+
+def get_aliases_by_ids(db_path, alias_ids):
+    """Fetch specific alias rows by ID list. Returns list of dicts."""
+    if not alias_ids:
+        return []
+    conn = get_db(db_path)
+    placeholders = ", ".join("?" for _ in alias_ids)
+    rows = conn.execute(
+        f"SELECT * FROM aliases WHERE id IN ({placeholders})",
+        list(alias_ids),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def cleanup_all(db_path, upload_folder):
     """Delete all imported data, imports log, and uploaded files."""
     conn = get_db(db_path)

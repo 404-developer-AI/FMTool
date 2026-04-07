@@ -181,6 +181,52 @@ SOPHOS_OBJECT_LABELS = {
 }
 
 
+def get_existing_object_names(app_config):
+    """Fetch names of existing Sophos objects for duplicate detection.
+
+    Returns:
+        dict: {category: set of names} e.g. {"ip_hosts": {"host1", "host2"}, ...}
+    """
+    client = get_client(app_config)
+    result = {}
+
+    fetch_map = [
+        ("ip_hosts", "get_ip_host", "IPHost"),
+        ("ip_host_groups", "get_ip_hostgroup", "IPHostGroup"),
+        ("fqdn_hosts", "get_fqdn_host", "FQDNHost"),
+        ("services", "get_service", "Services"),
+        ("service_groups", "get_service_group", "ServiceGroup"),
+    ]
+
+    for key, method_name, xml_tag in fetch_map:
+        try:
+            method = getattr(client, method_name)
+            response = _retry_on_rate_limit(method)
+            result[key] = _extract_names(response, xml_tag)
+        except SophosFirewallZeroRecords:
+            result[key] = set()
+        except (SophosFirewallAPIError, Exception) as e:
+            logger.warning("Failed to fetch %s names: %s", key, e)
+            result[key] = set()
+
+    return result
+
+
+def _extract_names(response, xml_tag):
+    """Extract object names from SDK response dict."""
+    names = set()
+    if not response or "Response" not in response:
+        return names
+    data = response["Response"].get(xml_tag)
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict) and "Name" in item:
+                names.add(item["Name"])
+    elif isinstance(data, dict) and "Name" in data:
+        names.add(data["Name"])
+    return names
+
+
 def _retry_on_rate_limit(func, *args, **kwargs):
     """Retry a function call with exponential backoff on rate limiting."""
     for attempt in range(MAX_RETRIES):
