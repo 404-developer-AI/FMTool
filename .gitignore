@@ -1,0 +1,64 @@
+# === Nooit committen: project-interne docs ===
+NOTFORCLAUD.MD
+CLAUDE.MD
+ARCHITECTURE.MD
+ROADMAP.MD
+COMPLETEDVERSIONS.MD
+
+# Case-insensitive varianten
+notforclaud.md
+claude.md
+architecture.md
+roadmap.md
+completedversions.md
+
+# === Secrets & credentials ===
+*.key
+*.pem
+*.crt
+*.pfx
+*.p12
+*.env
+.env
+.env.*
+secrets/
+credentials/
+**/secrets.*
+**/credentials.*
+*.secret
+
+# === API keys & config met gevoelige data ===
+config.local.*
+*.local.json
+*.local.yaml
+*.local.yml
+
+# === OS & IDE ===
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.swp
+*~
+Thumbs.db
+.DS_Store
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# === Node (mocht het nodig zijn) ===
+node_modules/
+
+# === Instance data (database, uploads) ===
+instance/
+
+# === Logs ===
+*.log
+logs/

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Dashboard{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h1>FMTool</h1>
+    <p>pfSense to Sophos XGS Migration Tool</p>
+</div>
+
+<div class="status-cards">
+    <div class="card">
+        <h3>Import</h3>
+        <p class="card-status pending">No backup imported</p>
+        <p class="card-detail">Upload a pfSense XML backup to get started.</p>
+    </div>
+    <div class="card">
+        <h3>Sophos Connection</h3>
+        <p class="card-status pending">Not configured</p>
+        <p class="card-detail">Configure Sophos XGS API credentials.</p>
+    </div>
+    <div class="card">
+        <h3>Migration</h3>
+        <p class="card-status pending">Waiting for import</p>
+        <p class="card-detail">Import a backup and connect to Sophos to begin.</p>
+    </div>
+</div>
+{% endblock %}
