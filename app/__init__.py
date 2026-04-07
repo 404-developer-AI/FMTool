@@ -24,9 +24,11 @@ def create_app():
 
     # Register blueprints
     from app.routes.main import main_bp
+    from app.routes.overview import overview_bp
     from app.routes.upload import upload_bp
 
     app.register_blueprint(main_bp)
+    app.register_blueprint(overview_bp)
     app.register_blueprint(upload_bp)
 
     return app

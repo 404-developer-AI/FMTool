@@ -454,6 +454,164 @@ DATA_TABLES = [
     "users", "groups", "packages",
 ]
 
+# Detail page configuration: which tables get detail pages and what columns to show
+DETAIL_TABLES = {
+    "interfaces": {
+        "label": "Interfaces",
+        "columns": [
+            ("if_name", "Interface"), ("device", "Device"), ("descr", "Description"),
+            ("enable", "Enabled"), ("ipaddr", "IP Address"), ("subnet", "Subnet"), ("gateway", "Gateway"),
+        ],
+        "has_status": True,
+    },
+    "firewall_rules": {
+        "label": "Firewall Rules",
+        "columns": [
+            ("interface", "Interface"), ("protocol", "Protocol"),
+            ("source_value", "Source"), ("source_port", "Src Port"),
+            ("destination_value", "Destination"), ("destination_port", "Dst Port"),
+            ("descr", "Description"), ("disabled", "Disabled"),
+        ],
+        "has_status": True,
+    },
+    "nat_rules": {
+        "label": "NAT Port Forward",
+        "columns": [
+            ("interface", "Interface"), ("protocol", "Protocol"),
+            ("source_value", "Source"), ("destination_value", "Destination"),
+            ("destination_port", "Dst Port"), ("target", "Target"), ("local_port", "Local Port"),
+            ("descr", "Description"), ("disabled", "Disabled"),
+        ],
+        "has_status": True,
+    },
+    "nat_onetoone": {
+        "label": "NAT 1:1",
+        "columns": [
+            ("interface", "Interface"), ("external", "External IP"),
+            ("source_value", "Source"), ("destination_value", "Destination"),
+            ("descr", "Description"), ("disabled", "Disabled"),
+        ],
+        "has_status": True,
+    },
+    "aliases": {
+        "label": "Aliases",
+        "columns": [
+            ("name", "Name"), ("type", "Type"), ("address", "Address"), ("descr", "Description"),
+        ],
+        "has_status": True,
+    },
+    "virtual_ips": {
+        "label": "Virtual IPs",
+        "columns": [
+            ("mode", "Mode"), ("interface", "Interface"), ("subnet", "Subnet"),
+            ("subnet_bits", "Bits"), ("descr", "Description"),
+        ],
+        "has_status": True,
+    },
+    "gateways": {
+        "label": "Gateways",
+        "columns": [
+            ("name", "Name"), ("interface", "Interface"), ("gateway", "Gateway"),
+            ("ipprotocol", "Protocol"), ("descr", "Description"),
+            ("default_v4", "Default v4"), ("default_v6", "Default v6"),
+        ],
+        "has_status": True,
+    },
+    "static_routes": {
+        "label": "Static Routes",
+        "columns": [
+            ("network", "Network"), ("gateway", "Gateway"), ("descr", "Description"),
+        ],
+        "has_status": True,
+    },
+    "dhcp_config": {
+        "label": "DHCP",
+        "columns": [
+            ("interface", "Interface"), ("version", "Version"),
+            ("range_from", "Range From"), ("range_to", "Range To"),
+        ],
+        "has_status": True,
+    },
+    "dns_host_overrides": {
+        "label": "DNS Overrides",
+        "columns": [
+            ("host", "Host"), ("domain", "Domain"), ("ip", "IP Address"), ("descr", "Description"),
+        ],
+        "has_status": True,
+    },
+    "ipsec_phase1": {
+        "label": "IPsec Phase 1",
+        "columns": [
+            ("ikeid", "IKE ID"), ("iketype", "Type"), ("mode", "Mode"),
+            ("interface", "Interface"), ("remote_gateway", "Remote Gateway"),
+            ("descr", "Description"), ("disabled", "Disabled"),
+        ],
+        "has_status": True,
+    },
+    "ipsec_phase2": {
+        "label": "IPsec Phase 2",
+        "columns": [
+            ("ikeid", "IKE ID"), ("uniqid", "Unique ID"), ("mode", "Mode"),
+            ("descr", "Description"), ("localid_address", "Local"), ("remoteid_address", "Remote"),
+        ],
+        "has_status": True,
+    },
+    "openvpn_servers": {
+        "label": "OpenVPN Servers",
+        "columns": [
+            ("vpnid", "VPN ID"), ("mode", "Mode"), ("protocol", "Protocol"),
+            ("interface", "Interface"), ("local_port", "Port"),
+            ("tunnel_network", "Tunnel Network"), ("description", "Description"),
+        ],
+        "has_status": True,
+    },
+    "openvpn_csc": {
+        "label": "OpenVPN CSC",
+        "columns": [
+            ("common_name", "Common Name"), ("description", "Description"),
+            ("tunnel_network", "Tunnel Network"), ("local_network", "Local Network"),
+        ],
+        "has_status": True,
+    },
+    "certificates": {
+        "label": "Certificates",
+        "columns": [
+            ("refid", "Ref ID"), ("descr", "Description"), ("serial", "Serial"),
+        ],
+        "has_status": True,
+    },
+    "certificate_authorities": {
+        "label": "Certificate Authorities",
+        "columns": [
+            ("refid", "Ref ID"), ("descr", "Description"), ("serial", "Serial"),
+        ],
+        "has_status": True,
+    },
+    "users": {
+        "label": "Users",
+        "columns": [
+            ("name", "Name"), ("uid", "UID"), ("descr", "Description"), ("scope", "Scope"),
+        ],
+        "has_status": False,
+    },
+    "groups": {
+        "label": "Groups",
+        "columns": [
+            ("name", "Name"), ("gid", "GID"), ("description", "Description"), ("scope", "Scope"),
+        ],
+        "has_status": False,
+    },
+    "packages": {
+        "label": "Packages",
+        "columns": [
+            ("internal_name", "Internal Name"), ("name", "Name"),
+            ("version", "Version"), ("descr", "Description"),
+        ],
+        "has_status": False,
+    },
+}
+
+
 # Tables shown in the summary with display labels
 SUMMARY_TABLES = [
     ("interfaces", "Interfaces"),
@@ -749,6 +907,63 @@ def get_import_summary(db_path):
         row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table}").fetchone()
         count = row["cnt"]
         counts.append({"table": table, "label": label, "count": count})
+        total += count
+    conn.close()
+
+    return {
+        "import": last,
+        "counts": counts,
+        "total": total,
+    }
+
+
+def get_table_items(db_path, table_name):
+    """Get all items from a specific table.
+
+    Validates table_name against DETAIL_TABLES to prevent SQL injection.
+    Returns list of dicts, or empty list if table_name is invalid.
+    """
+    if table_name not in DETAIL_TABLES:
+        return []
+    conn = get_db(db_path)
+    rows = conn.execute(f"SELECT * FROM {table_name}").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_import_summary_with_status(db_path):
+    """Get summary with per-table migration status breakdown.
+
+    Extends get_import_summary with status counts per table.
+    Returns None if no imports exist.
+    """
+    last = get_last_import(db_path)
+    if not last:
+        return None
+
+    conn = get_db(db_path)
+    counts = []
+    total = 0
+    for table, label in SUMMARY_TABLES:
+        row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table}").fetchone()
+        count = row["cnt"]
+
+        statuses = {}
+        has_status = DETAIL_TABLES.get(table, {}).get("has_status", False)
+        if has_status and count > 0:
+            status_rows = conn.execute(
+                f"SELECT migration_status, COUNT(*) as cnt FROM {table} GROUP BY migration_status"
+            ).fetchall()
+            for sr in status_rows:
+                statuses[sr["migration_status"]] = sr["cnt"]
+
+        counts.append({
+            "table": table,
+            "label": label,
+            "count": count,
+            "has_status": has_status,
+            "statuses": statuses,
+        })
         total += count
     conn.close()
 

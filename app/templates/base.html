@@ -12,7 +12,7 @@
             <a href="{{ url_for('main.index') }}">FMTool</a>
         </div>
         <ul class="nav-links">
-            <li><a href="{{ url_for('main.index') }}" class="{% if request.endpoint == 'main.index' %}active{% endif %}">Dashboard</a></li>
+            <li><a href="{{ url_for('main.index') }}" class="{% if request.endpoint == 'main.index' or (request.endpoint and request.endpoint.startswith('overview.')) %}active{% endif %}">Dashboard</a></li>
             <li><a href="{{ url_for('upload.upload_page') }}" class="{% if request.endpoint and request.endpoint.startswith('upload.') %}active{% endif %}">Import</a></li>
         </ul>
     </nav>

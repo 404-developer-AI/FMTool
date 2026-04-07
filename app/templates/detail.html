@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — {{ label }}{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+    <a href="{{ url_for('main.index') }}">Dashboard</a>
+    <span class="breadcrumb-sep">/</span>
+    <span>{{ label }}</span>
+</nav>
+
+<div class="page-header">
+    <h1>{{ label }}</h1>
+    <p>{{ items|length }} items</p>
+</div>
+
+{% if items %}
+<div class="controls-bar">
+    <input type="text" class="search-input" placeholder="Search..." aria-label="Search items">
+    {% if has_status %}
+    <select class="filter-select" data-filter="status" aria-label="Filter by status">
+        <option value="">All statuses</option>
+    </select>
+    {% endif %}
+    <span class="match-count">Showing <span id="visible-count">{{ items|length }}</span> of {{ items|length }}</span>
+</div>
+
+<div class="detail-table-wrapper">
+    <table class="detail-table">
+        <thead>
+            <tr>
+                {% if has_status %}
+                <th class="sortable" data-col="status">Status</th>
+                {% endif %}
+                {% for col_key, col_label in columns %}
+                <th class="sortable" data-col="{{ col_key }}">{{ col_label }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr class="expandable-row"
+                {% if has_status %}data-status="{{ item.migration_status or 'pending' }}"{% endif %}
+                data-search="{% if has_status %}{{ item.migration_status or 'pending' }} {% endif %}{% for col_key, _ in columns %}{{ item[col_key] or '' }} {% endfor %}">
+                {% if has_status %}
+                <td><span class="status-badge {{ item.migration_status or 'pending' }}">{{ item.migration_status or 'pending' }}</span></td>
+                {% endif %}
+                {% for col_key, _ in columns %}
+                <td>{{ item[col_key] if item[col_key] is not none else '' }}</td>
+                {% endfor %}
+            </tr>
+            <tr class="xml-row" style="display:none">
+                <td colspan="{{ columns|length + (1 if has_status else 0) }}">
+                    <pre class="raw-xml">{{ item.raw_xml or 'No XML data' }}</pre>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="no-data">
+    <p>No items in this category.</p>
+    <a href="{{ url_for('main.index') }}" class="btn btn-primary">Back to Dashboard</a>
+</div>
+{% endif %}
+
+<script src="{{ url_for('static', filename='js/detail.js') }}"></script>
+{% endblock %}

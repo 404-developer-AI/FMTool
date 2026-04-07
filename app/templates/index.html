@@ -37,4 +37,44 @@
         {% endif %}
     </div>
 </div>
+
+{% if summary %}
+<div class="category-overview">
+    <h2>Configuration Overview</h2>
+    <div class="category-grid">
+        {% for item in summary.counts %}
+        {% if item.count > 0 %}
+        <a href="{{ url_for('overview.detail', category=item.table) }}" class="category-card">
+            <div class="category-card-header">
+                <span class="category-label">{{ item.label }}</span>
+                <span class="category-count">{{ item.count }}</span>
+            </div>
+            {% if item.has_status and item.statuses %}
+            <div class="status-bar">
+                {% set pending = item.statuses.get('pending', 0) %}
+                {% set migrated = item.statuses.get('migrated', 0) %}
+                {% set skipped = item.statuses.get('skipped', 0) %}
+                {% set failed = item.statuses.get('failed', 0) %}
+                {% if pending %}<div class="bar-pending" style="width:{{ (pending / item.count * 100)|round(1) }}%" title="Pending: {{ pending }}"></div>{% endif %}
+                {% if migrated %}<div class="bar-migrated" style="width:{{ (migrated / item.count * 100)|round(1) }}%" title="Migrated: {{ migrated }}"></div>{% endif %}
+                {% if skipped %}<div class="bar-skipped" style="width:{{ (skipped / item.count * 100)|round(1) }}%" title="Skipped: {{ skipped }}"></div>{% endif %}
+                {% if failed %}<div class="bar-failed" style="width:{{ (failed / item.count * 100)|round(1) }}%" title="Failed: {{ failed }}"></div>{% endif %}
+            </div>
+            <div class="status-summary">
+                {% if pending %}<span class="pending">{{ pending }} pending</span>{% endif %}
+                {% if migrated %}<span class="migrated">{{ migrated }} migrated</span>{% endif %}
+                {% if skipped %}<span class="skipped">{{ skipped }} skipped</span>{% endif %}
+                {% if failed %}<span class="failed">{{ failed }} failed</span>{% endif %}
+            </div>
+            {% else %}
+            <div class="status-summary">
+                <span class="pending">Reference data</span>
+            </div>
+            {% endif %}
+        </a>
+        {% endif %}
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
 {% endblock %}
