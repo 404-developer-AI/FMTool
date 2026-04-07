@@ -25,6 +25,8 @@
     const modalCancel = document.getElementById('modal-cancel');
     const modalConfirm = document.getElementById('modal-confirm');
     const dstZoneSelect = document.getElementById('dst-zone-select');
+    const dstNetworkSelect = document.getElementById('dst-network-select');
+    const btnFetchInterfaces = document.getElementById('btn-fetch-interfaces');
 
     // --- Mapping section ---
     const mappingToggle = document.getElementById('mapping-toggle');
@@ -90,6 +92,82 @@
             });
             if (currentVal) dstZoneSelect.value = currentVal;
         }
+    }
+
+    // --- Fetch Sophos interfaces for destination network dropdown ---
+    let sophosInterfaces = [];
+
+    if (btnFetchInterfaces) {
+        btnFetchInterfaces.addEventListener('click', async function() {
+            btnFetchInterfaces.disabled = true;
+            btnFetchInterfaces.textContent = 'Fetching...';
+            let fetchedZones = false;
+            let fetchedIfaces = false;
+
+            // Fetch zones and interfaces in parallel
+            try {
+                const [zoneResp, ifaceResp] = await Promise.all([
+                    fetch('/migrate/firewall-rules/sophos-zones', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                    }),
+                    fetch('/migrate/firewall-rules/sophos-interfaces', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                    }),
+                ]);
+                const zoneData = await zoneResp.json();
+                const ifaceData = await ifaceResp.json();
+
+                if (zoneData.success) {
+                    sophosZones = zoneData.zones;
+                    populateZoneDropdown();
+                    fetchedZones = true;
+                }
+                if (ifaceData.success) {
+                    sophosInterfaces = ifaceData.interfaces;
+                    populateNetworkDropdown();
+                    fetchedIfaces = true;
+                }
+
+                const parts = [];
+                if (fetchedZones) parts.push(`${sophosZones.length} zones`);
+                if (fetchedIfaces) parts.push(`${sophosInterfaces.length} interfaces`);
+                showToast(`Loaded ${parts.join(' and ')} from Sophos`, 'success');
+            } catch (e) {
+                showToast('Network error fetching from Sophos', 'error');
+            }
+
+            btnFetchInterfaces.disabled = false;
+            btnFetchInterfaces.textContent = 'Fetch from Sophos';
+        });
+    }
+
+    function populateNetworkDropdown() {
+        if (!dstNetworkSelect) return;
+        const currentVal = dstNetworkSelect.value;
+        dstNetworkSelect.innerHTML = '<option value="">(per rule)</option>';
+
+        for (const iface of sophosInterfaces) {
+            // Main interface IP
+            if (iface.ip) {
+                const opt = document.createElement('option');
+                opt.value = iface.ip;
+                opt.textContent = `${iface.name} - ${iface.ip}${iface.zone ? ' (' + iface.zone + ')' : ''}`;
+                dstNetworkSelect.appendChild(opt);
+            }
+            // Alias IPs
+            for (const aip of (iface.alias_ips || [])) {
+                const opt = document.createElement('option');
+                opt.value = aip;
+                opt.textContent = `${iface.name} alias - ${aip}${iface.zone ? ' (' + iface.zone + ')' : ''}`;
+                dstNetworkSelect.appendChild(opt);
+            }
+        }
+
+        if (currentVal) dstNetworkSelect.value = currentVal;
+    }
+
+    function getSelectedDstNetwork() {
+        return dstNetworkSelect ? dstNetworkSelect.value : '';
     }
 
     // --- Zone mapping CRUD ---
@@ -406,7 +484,7 @@
             const resp = await fetch('/migrate/firewall-rules/plan', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({rule_ids: ids, dst_zone: getSelectedDstZone()}),
+                body: JSON.stringify({rule_ids: ids, dst_zone: getSelectedDstZone(), dst_network: getSelectedDstNetwork()}),
             });
             const data = await resp.json();
             if (data.success) {
@@ -616,7 +694,7 @@
             const resp = await fetch('/migrate/firewall-rules/execute', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({rule_ids: ids, dst_zone: getSelectedDstZone()}),
+                body: JSON.stringify({rule_ids: ids, dst_zone: getSelectedDstZone(), dst_network: getSelectedDstNetwork()}),
             });
             const data = await resp.json();
 

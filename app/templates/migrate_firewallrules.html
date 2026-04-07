@@ -68,6 +68,7 @@
                 </select>
                 <button class="btn btn-small btn-secondary" id="btn-add-zone" {% if not configured %}disabled{% endif %}>Add</button>
                 <button class="btn btn-small btn-secondary" id="btn-fetch-zones" {% if not configured %}disabled{% endif %}>Fetch Zones</button>
+                <span class="mapping-hint">(or use "Fetch from Sophos" button above the table)</span>
             </div>
         </div>
 
@@ -142,11 +143,20 @@
 </div>
 
 <div class="migrate-controls">
-    <div class="dst-zone-control">
-        <label for="dst-zone-select">Destination Zone:</label>
-        <select id="dst-zone-select" class="filter-select" {% if not configured %}disabled{% endif %}>
-            <option value="">Any (default)</option>
-        </select>
+    <div class="bulk-overrides">
+        <div class="dst-zone-control">
+            <label for="dst-zone-select">Dst Zone:</label>
+            <select id="dst-zone-select" class="filter-select" {% if not configured %}disabled{% endif %}>
+                <option value="">Any (default)</option>
+            </select>
+        </div>
+        <div class="dst-zone-control">
+            <label for="dst-network-select">Dst Network:</label>
+            <select id="dst-network-select" class="filter-select" {% if not configured %}disabled{% endif %}>
+                <option value="">(per rule)</option>
+            </select>
+        </div>
+        <button class="btn btn-small btn-secondary" id="btn-fetch-interfaces" {% if not configured %}disabled{% endif %}>Fetch from Sophos</button>
     </div>
     <button class="btn btn-secondary" id="btn-dryrun" {% if not configured %}disabled{% endif %}>Dry Run</button>
     <button class="btn btn-success" id="btn-migrate" {% if not configured %}disabled{% endif %}>Migrate Selected</button>

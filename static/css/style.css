@@ -1327,17 +1327,28 @@ a:hover {
     opacity: 0.85;
 }
 
-/* Destination zone control */
+/* Bulk override controls */
+.bulk-overrides {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-right: auto;
+}
+
 .dst-zone-control {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-right: auto;
 }
 
 .dst-zone-control label {
     font-size: 0.85rem;
     white-space: nowrap;
+    color: var(--color-text-muted);
+}
+
+.mapping-hint {
+    font-size: 0.75rem;
     color: var(--color-text-muted);
 }
 

@@ -10,7 +10,7 @@ from app.models.database import (
 from app.services.sophos_client import (
     is_configured, get_client, get_existing_object_names,
     get_existing_fw_rule_names, get_zone_names, get_existing_services_with_details,
-    SophosConnectionError,
+    get_interface_details, SophosConnectionError,
 )
 from app.services.migration_engine import (
     plan_alias_migration, execute_alias_migration,
@@ -290,8 +290,9 @@ def plan_firewall_rules():
     aliases = get_table_items(db_path, "aliases")
     migrated_alias_names = {a["name"] for a in aliases if a.get("migration_status") == "migrated"}
 
-    # Destination zone override (bulk selection from UI)
+    # Bulk overrides from UI
     dst_zone_override = data.get("dst_zone") or None
+    dst_network_override = data.get("dst_network") or None
 
     # Sort rules by ID to maintain order
     rules.sort(key=lambda r: r["id"])
@@ -305,6 +306,7 @@ def plan_firewall_rules():
             migrated_alias_names, existing_object_names,
             prev_rule_name=prev_name,
             dst_zone_override=dst_zone_override,
+            dst_network_override=dst_network_override,
         )
         plans.append(planned_rule_to_dict(plan))
         if plan.action == "create":
@@ -323,6 +325,7 @@ def execute_firewall_rules():
     db_path = current_app.config["DATABASE_PATH"]
     rule_ids = data["rule_ids"]
     dst_zone_override = data.get("dst_zone") or None
+    dst_network_override = data.get("dst_network") or None
 
     rules = get_firewall_rules_by_ids(db_path, rule_ids)
     if not rules:
@@ -357,6 +360,7 @@ def execute_firewall_rules():
             migrated_alias_names, existing_object_names,
             prev_rule_name=prev_name,
             dst_zone_override=dst_zone_override,
+            dst_network_override=dst_network_override,
         )
         result = execute_fwrule_migration(client, plan)
         update_migration_status(db_path, "firewall_rules", [rule["id"]], result.status)
@@ -496,3 +500,16 @@ def fetch_sophos_zones():
         return jsonify({"success": True, "zones": zones})
     except Exception as e:
         return jsonify({"success": False, "message": f"Failed to fetch zones: {e}"}), 500
+
+
+@migrate_bp.route("/migrate/firewall-rules/sophos-interfaces", methods=["POST"])
+def fetch_sophos_interfaces():
+    """AJAX: Fetch Sophos interface details (name, zone, IP, aliases) for dropdown."""
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    try:
+        interfaces = get_interface_details(current_app.config)
+        return jsonify({"success": True, "interfaces": interfaces})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to fetch interfaces: {e}"}), 500

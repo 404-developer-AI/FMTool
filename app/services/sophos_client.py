@@ -229,6 +229,77 @@ def get_existing_fw_rule_names(app_config):
         return set()
 
 
+def get_interface_details(app_config):
+    """Fetch Sophos interface details including IPs and aliases.
+
+    Returns:
+        list: List of dicts with interface info:
+              [{"name": "Port1", "zone": "WAN", "ip": "1.2.3.4", "alias_ips": ["1.2.3.5"]}]
+    """
+    client = get_client(app_config)
+    try:
+        response = _retry_on_rate_limit(client.get_interface)
+    except SophosFirewallZeroRecords:
+        return []
+    except (SophosFirewallAPIError, Exception) as e:
+        logger.warning("Failed to fetch interface details: %s", e)
+        return []
+
+    if not response or "Response" not in response:
+        return []
+
+    data = response["Response"].get("Interface")
+    if not data:
+        return []
+
+    items = data if isinstance(data, list) else [data]
+    interfaces = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("Name", "")
+        if not name:
+            continue
+
+        # Extract IPv4 address — try common field names
+        ip = (item.get("IPv4Address") or item.get("IPAddress")
+              or item.get("IPv4Configuration", {}).get("IPAddress", "")
+              if isinstance(item.get("IPv4Configuration"), dict) else "")
+
+        # Extract zone
+        zone = item.get("Zone", "")
+
+        # Extract alias IPs — try common structures
+        alias_ips = []
+        for alias_key in ("IPv4Alias", "AliasIPv4", "AliasList", "AddressAlias"):
+            alias_data = item.get(alias_key)
+            if not alias_data:
+                continue
+            if isinstance(alias_data, str):
+                alias_ips.append(alias_data)
+            elif isinstance(alias_data, list):
+                for a in alias_data:
+                    if isinstance(a, str):
+                        alias_ips.append(a)
+                    elif isinstance(a, dict):
+                        aip = a.get("IPAddress") or a.get("Address") or a.get("IP", "")
+                        if aip:
+                            alias_ips.append(aip)
+            elif isinstance(alias_data, dict):
+                aip = alias_data.get("IPAddress") or alias_data.get("Address") or alias_data.get("IP", "")
+                if aip:
+                    alias_ips.append(aip)
+
+        interfaces.append({
+            "name": name,
+            "zone": zone,
+            "ip": ip,
+            "alias_ips": alias_ips,
+        })
+
+    return interfaces
+
+
 def get_zone_names(app_config):
     """Fetch names of existing Sophos zones.
 

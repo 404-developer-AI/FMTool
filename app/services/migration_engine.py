@@ -498,7 +498,8 @@ class RuleMigrationResult:
 def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
                           existing_rule_names, existing_services,
                           migrated_alias_names, existing_object_names,
-                          prev_rule_name=None, dst_zone_override=None):
+                          prev_rule_name=None, dst_zone_override=None,
+                          dst_network_override=None):
     """Generate a migration plan for a single pfSense firewall rule.
 
     Args:
@@ -511,6 +512,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
         existing_object_names: dict of sets from get_existing_object_names()
         prev_rule_name: Sophos name of previously planned rule (for ordering)
         dst_zone_override: optional Sophos zone name for destination (bulk override)
+        dst_network_override: optional Sophos object name for destination network (bulk override)
 
     Returns:
         PlannedRule
@@ -569,13 +571,17 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     )
     plan.warnings.extend(src_warnings)
 
-    # Resolve destination network
-    dst_networks, dst_warnings = _resolve_network(
-        rule_row.get("destination_type", ""),
-        rule_row.get("destination_value", ""),
-        rule_row.get("destination_not", 0),
-        network_mappings, migrated_alias_names, existing_object_names,
-    )
+    # Resolve destination network: use override if provided
+    if dst_network_override:
+        dst_networks = [dst_network_override]
+        dst_warnings = []
+    else:
+        dst_networks, dst_warnings = _resolve_network(
+            rule_row.get("destination_type", ""),
+            rule_row.get("destination_value", ""),
+            rule_row.get("destination_not", 0),
+            network_mappings, migrated_alias_names, existing_object_names,
+        )
     plan.warnings.extend(dst_warnings)
 
     # Resolve service: dst_port should map to a Sophos service
