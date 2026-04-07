@@ -212,6 +212,86 @@ def get_existing_object_names(app_config):
     return result
 
 
+def get_existing_fw_rule_names(app_config):
+    """Fetch names of existing Sophos firewall rules for duplicate detection.
+
+    Returns:
+        set: Set of rule name strings
+    """
+    client = get_client(app_config)
+    try:
+        response = _retry_on_rate_limit(client.get_fw_rule)
+        return _extract_names(response, "FirewallRule")
+    except SophosFirewallZeroRecords:
+        return set()
+    except (SophosFirewallAPIError, Exception) as e:
+        logger.warning("Failed to fetch firewall rule names: %s", e)
+        return set()
+
+
+def get_zone_names(app_config):
+    """Fetch names of existing Sophos zones.
+
+    Returns:
+        list: List of zone name strings, sorted
+    """
+    client = get_client(app_config)
+    try:
+        response = _retry_on_rate_limit(client.get_zone)
+        names = _extract_names(response, "Zone")
+        return sorted(names)
+    except SophosFirewallZeroRecords:
+        return []
+    except (SophosFirewallAPIError, Exception) as e:
+        logger.warning("Failed to fetch zone names: %s", e)
+        return []
+
+
+def get_existing_services_with_details(app_config):
+    """Fetch existing Sophos services with protocol/port details.
+
+    Returns:
+        list: List of dicts with 'name' and 'details' keys.
+              Each detail has 'protocol' and 'dst_port'.
+    """
+    client = get_client(app_config)
+    try:
+        response = _retry_on_rate_limit(client.get_service)
+    except SophosFirewallZeroRecords:
+        return []
+    except (SophosFirewallAPIError, Exception) as e:
+        logger.warning("Failed to fetch service details: %s", e)
+        return []
+
+    services = []
+    if not response or "Response" not in response:
+        return services
+
+    data = response["Response"].get("Services")
+    if not data:
+        return services
+
+    items = data if isinstance(data, list) else [data]
+    for item in items:
+        if not isinstance(item, dict) or "Name" not in item:
+            continue
+        details = []
+        sd = item.get("ServiceDetails", {})
+        if sd:
+            detail_list = sd.get("ServiceDetail")
+            if detail_list:
+                if isinstance(detail_list, dict):
+                    detail_list = [detail_list]
+                for d in detail_list:
+                    if isinstance(d, dict):
+                        details.append({
+                            "protocol": d.get("Protocol", ""),
+                            "dst_port": d.get("DestinationPort", ""),
+                        })
+        services.append({"name": item["Name"], "details": details})
+    return services
+
+
 def _extract_names(response, xml_tag):
     """Extract object names from SDK response dict."""
     names = set()

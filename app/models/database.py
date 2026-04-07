@@ -436,6 +436,18 @@ def init_db(db_path):
             migration_status TEXT DEFAULT 'pending',
             UNIQUE(external)
         );
+
+        CREATE TABLE IF NOT EXISTS zone_mappings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pfsense_interface TEXT NOT NULL UNIQUE,
+            sophos_zone TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS network_alias_mappings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pfsense_value TEXT NOT NULL UNIQUE,
+            sophos_object TEXT NOT NULL
+        );
     """)
 
     conn.commit()
@@ -1016,6 +1028,84 @@ def get_aliases_by_ids(db_path, alias_ids):
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def get_firewall_rules_by_ids(db_path, rule_ids):
+    """Fetch specific firewall rule rows by ID list. Returns list of dicts."""
+    if not rule_ids:
+        return []
+    conn = get_db(db_path)
+    placeholders = ", ".join("?" for _ in rule_ids)
+    rows = conn.execute(
+        f"SELECT * FROM firewall_rules WHERE id IN ({placeholders})",
+        list(rule_ids),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_zone_mappings(db_path):
+    """Get all zone mappings. Returns list of dicts."""
+    conn = get_db(db_path)
+    rows = conn.execute("SELECT * FROM zone_mappings ORDER BY pfsense_interface").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_zone_mapping(db_path, pfsense_interface, sophos_zone):
+    """Save or update a zone mapping. Returns the row id."""
+    conn = get_db(db_path)
+    cur = conn.execute(
+        "INSERT INTO zone_mappings (pfsense_interface, sophos_zone) VALUES (?, ?) "
+        "ON CONFLICT(pfsense_interface) DO UPDATE SET sophos_zone=excluded.sophos_zone",
+        (pfsense_interface, sophos_zone),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return row_id
+
+
+def delete_zone_mapping(db_path, mapping_id):
+    """Delete a zone mapping by ID. Returns number of rows deleted."""
+    conn = get_db(db_path)
+    cur = conn.execute("DELETE FROM zone_mappings WHERE id = ?", (mapping_id,))
+    conn.commit()
+    deleted = cur.rowcount
+    conn.close()
+    return deleted
+
+
+def get_network_alias_mappings(db_path):
+    """Get all network alias mappings. Returns list of dicts."""
+    conn = get_db(db_path)
+    rows = conn.execute("SELECT * FROM network_alias_mappings ORDER BY pfsense_value").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_network_alias_mapping(db_path, pfsense_value, sophos_object):
+    """Save or update a network alias mapping. Returns the row id."""
+    conn = get_db(db_path)
+    cur = conn.execute(
+        "INSERT INTO network_alias_mappings (pfsense_value, sophos_object) VALUES (?, ?) "
+        "ON CONFLICT(pfsense_value) DO UPDATE SET sophos_object=excluded.sophos_object",
+        (pfsense_value, sophos_object),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return row_id
+
+
+def delete_network_alias_mapping(db_path, mapping_id):
+    """Delete a network alias mapping by ID. Returns number of rows deleted."""
+    conn = get_db(db_path)
+    cur = conn.execute("DELETE FROM network_alias_mappings WHERE id = ?", (mapping_id,))
+    conn.commit()
+    deleted = cur.rowcount
+    conn.close()
+    return deleted
 
 
 def cleanup_all(db_path, upload_folder):

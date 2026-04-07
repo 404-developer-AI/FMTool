@@ -1199,3 +1199,174 @@ a:hover {
     color: var(--color-pending);
     font-size: 0.8rem;
 }
+
+/* Migrate sub-navigation */
+.migrate-subnav {
+    display: flex;
+    gap: 0;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid var(--color-border);
+}
+
+.migrate-subnav a {
+    padding: 0.5rem 1rem;
+    color: var(--color-text-muted);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    font-size: 0.9rem;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.migrate-subnav a:hover {
+    color: var(--color-text);
+}
+
+.migrate-subnav a.active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+}
+
+/* Mapping section */
+.mapping-section {
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+}
+
+.mapping-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.mapping-header h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.toggle-icon {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+}
+
+.mapping-content {
+    padding: 0 1rem 1rem;
+}
+
+.mapping-table-wrapper {
+    margin-bottom: 1rem;
+}
+
+.mapping-table-wrapper h4 {
+    margin: 0.5rem 0 0.25rem;
+    font-size: 0.9rem;
+}
+
+.mapping-desc {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    margin: 0 0 0.5rem;
+}
+
+.mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.mapping-table th,
+.mapping-table td {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--color-border);
+    text-align: left;
+}
+
+.mapping-table th {
+    background: var(--color-surface-alt);
+    font-weight: 600;
+}
+
+.mapping-table .col-actions {
+    width: 80px;
+    text-align: center;
+}
+
+.mapping-add-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    align-items: center;
+}
+
+.mapping-input {
+    padding: 0.3rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.85rem;
+    min-width: 140px;
+}
+
+.btn-danger {
+    background: var(--color-failed);
+    color: #fff;
+    border: none;
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+
+.btn-danger:hover {
+    opacity: 0.85;
+}
+
+/* Destination zone control */
+.dst-zone-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-right: auto;
+}
+
+.dst-zone-control label {
+    font-size: 0.85rem;
+    white-space: nowrap;
+    color: var(--color-text-muted);
+}
+
+/* Missing service highlight in dry-run */
+.dryrun-missing-service .object-name {
+    color: var(--color-warning);
+    font-weight: 600;
+}
+
+.dryrun-missing-service .btn-create-service {
+    margin-left: 0.5rem;
+    font-size: 0.75rem;
+    vertical-align: middle;
+}
+
+/* Bulk actions bar in dry-run */
+.dryrun-bulk-actions {
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    background: var(--color-surface-alt);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--color-warning);
+}
+
+/* Disabled rule styling */
+.rule-disabled {
+    opacity: 0.6;
+}
+
+.rule-disabled td {
+    font-style: italic;
+}

@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Migrate Firewall Rules{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+    <a href="{{ url_for('main.index') }}">Dashboard</a>
+    <span class="breadcrumb-sep">/</span>
+    <span>Migrate Firewall Rules</span>
+</nav>
+
+<div class="migrate-subnav">
+    <a href="{{ url_for('migrate.migrate_aliases') }}">Aliases</a>
+    <a href="{{ url_for('migrate.migrate_firewall_rules') }}" class="active">Firewall Rules</a>
+    <a href="{{ url_for('migrate.migrate_virtual_ips') }}">Virtual IPs</a>
+</div>
+
+<div class="page-header">
+    <h1>Migrate Firewall Rules</h1>
+    <p>{{ rules|length }} rules — migrate pfSense firewall rules to Sophos</p>
+</div>
+
+{% if not configured %}
+<div class="ssl-warning">
+    <strong>Sophos API not configured.</strong>
+    Configure your Sophos connection in <a href="{{ url_for('sophos.sophos_page') }}">Sophos Settings</a> before migrating.
+</div>
+{% endif %}
+
+<!-- Mapping section -->
+<div class="mapping-section" id="mapping-section">
+    <div class="mapping-header" id="mapping-toggle">
+        <h3>Interface & Network Mappings</h3>
+        <span class="toggle-icon" id="mapping-toggle-icon">&#9660;</span>
+    </div>
+    <div class="mapping-content" id="mapping-content">
+        <!-- Zone Mapping -->
+        <div class="mapping-table-wrapper">
+            <h4>Zone Mapping</h4>
+            <p class="mapping-desc">Map pfSense interfaces to Sophos zones. Required for rule migration.</p>
+            <table class="mapping-table" id="zone-mapping-table">
+                <thead>
+                    <tr>
+                        <th>pfSense Interface</th>
+                        <th>Sophos Zone</th>
+                        <th class="col-actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="zone-mapping-body">
+                    {% for m in zone_mappings %}
+                    <tr data-id="{{ m.id }}">
+                        <td>{{ m.pfsense_interface }}</td>
+                        <td>{{ m.sophos_zone }}</td>
+                        <td><button class="btn btn-small btn-danger btn-delete-zone" data-id="{{ m.id }}">Delete</button></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="mapping-add-row" id="zone-add-row">
+                <select id="zone-pf-input" class="mapping-input">
+                    <option value="">Select interface...</option>
+                    {% for iface in pf_interfaces %}
+                    <option value="{{ iface }}">{{ iface }}</option>
+                    {% endfor %}
+                </select>
+                <select id="zone-sophos-input" class="mapping-input">
+                    <option value="">Select zone...</option>
+                </select>
+                <button class="btn btn-small btn-secondary" id="btn-add-zone" {% if not configured %}disabled{% endif %}>Add</button>
+                <button class="btn btn-small btn-secondary" id="btn-fetch-zones" {% if not configured %}disabled{% endif %}>Fetch Zones</button>
+            </div>
+        </div>
+
+        <!-- Network Alias Mapping -->
+        <div class="mapping-table-wrapper">
+            <h4>Network Alias Mapping</h4>
+            <p class="mapping-desc">Map pfSense network references (wanip, lanip, etc.) to Sophos objects.</p>
+            <table class="mapping-table" id="network-mapping-table">
+                <thead>
+                    <tr>
+                        <th>pfSense Value</th>
+                        <th>Sophos Object</th>
+                        <th class="col-actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="network-mapping-body">
+                    {% for m in network_mappings %}
+                    <tr data-id="{{ m.id }}">
+                        <td>{{ m.pfsense_value }}</td>
+                        <td>{{ m.sophos_object }}</td>
+                        <td><button class="btn btn-small btn-danger btn-delete-network" data-id="{{ m.id }}">Delete</button></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div class="mapping-add-row" id="network-add-row">
+                <select id="network-pf-input" class="mapping-input">
+                    <option value="">Select reference...</option>
+                    {% for ref in pf_network_refs %}
+                    <option value="{{ ref }}">{{ ref }}</option>
+                    {% endfor %}
+                </select>
+                <input type="text" id="network-sophos-input" class="mapping-input" placeholder="Sophos object name...">
+                <button class="btn btn-small btn-secondary" id="btn-add-network">Add</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if configured %}
+<div class="sync-status-bar" id="sync-status-bar">
+    <div class="sync-indicator">
+        <span class="sync-icon" id="sync-icon"></span>
+        <span class="sync-text" id="sync-text">Waiting for Sophos sync...</span>
+    </div>
+    <div class="sync-meta">
+        <span class="sync-timestamp" id="sync-timestamp"></span>
+        <button class="btn btn-small btn-secondary" id="btn-sync-refresh">Refresh</button>
+    </div>
+</div>
+{% endif %}
+
+{% if rules %}
+<div class="controls-bar">
+    <label class="select-all-label">
+        <input type="checkbox" id="select-all" class="select-all-checkbox">
+        Select all
+    </label>
+    <input type="text" class="search-input" id="search-input" placeholder="Search..." aria-label="Search rules">
+    <select class="filter-select" id="interface-filter" aria-label="Filter by interface">
+        <option value="">All interfaces</option>
+    </select>
+    <select class="filter-select" id="status-filter" aria-label="Filter by status">
+        <option value="">All statuses</option>
+    </select>
+    <select class="filter-select" id="disabled-filter" aria-label="Filter by enabled/disabled">
+        <option value="">All rules</option>
+        <option value="enabled">Enabled only</option>
+        <option value="disabled">Disabled only</option>
+    </select>
+    <span class="match-count">Showing <span id="visible-count">{{ rules|length }}</span> of {{ rules|length }}</span>
+</div>
+
+<div class="migrate-controls">
+    <div class="dst-zone-control">
+        <label for="dst-zone-select">Destination Zone:</label>
+        <select id="dst-zone-select" class="filter-select" {% if not configured %}disabled{% endif %}>
+            <option value="">Any (default)</option>
+        </select>
+    </div>
+    <button class="btn btn-secondary" id="btn-dryrun" {% if not configured %}disabled{% endif %}>Dry Run</button>
+    <button class="btn btn-success" id="btn-migrate" {% if not configured %}disabled{% endif %}>Migrate Selected</button>
+    <button class="btn btn-warning" id="btn-skip">Skip Selected</button>
+</div>
+
+<div id="dryrun-panel" class="dryrun-panel" style="display:none">
+    <div class="dryrun-header">
+        <h3>Dry Run Results</h3>
+        <div class="dryrun-actions">
+            <button class="btn btn-success btn-small" id="btn-dryrun-execute" {% if not configured %}disabled{% endif %}>Proceed with Migration</button>
+            <button class="btn btn-secondary btn-small" id="btn-dryrun-close">Dismiss</button>
+        </div>
+    </div>
+    <div id="dryrun-results"></div>
+</div>
+
+<div id="progress-panel" class="progress-panel" style="display:none">
+    <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+    </div>
+    <div class="progress-info" id="progress-info">Preparing migration...</div>
+</div>
+
+<div class="detail-table-wrapper">
+    <table class="detail-table migrate-table" id="fwrules-table">
+        <thead>
+            <tr>
+                <th class="col-checkbox"></th>
+                <th class="sortable" data-col="status">Status</th>
+                <th class="sortable" data-col="type">Action</th>
+                <th class="sortable" data-col="interface">Interface</th>
+                <th class="sortable" data-col="protocol">Protocol</th>
+                <th class="sortable" data-col="source">Source</th>
+                <th class="sortable" data-col="srcport">Src Port</th>
+                <th class="sortable" data-col="destination">Destination</th>
+                <th class="sortable" data-col="dstport">Dst Port</th>
+                <th class="sortable" data-col="descr">Description</th>
+                <th class="sortable" data-col="disabled">Disabled</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rule in rules %}
+            <tr class="migrate-row{% if rule.disabled %} rule-disabled{% endif %}"
+                data-id="{{ rule.id }}"
+                data-interface="{{ rule.interface or '' }}"
+                data-status="{{ rule.migration_status or 'pending' }}"
+                data-disabled="{{ rule.disabled or 0 }}"
+                data-search="{{ rule.migration_status or 'pending' }} {{ rule.type or '' }} {{ rule.interface or '' }} {{ rule.protocol or '' }} {{ rule.source_value or '' }} {{ rule.source_port or '' }} {{ rule.destination_value or '' }} {{ rule.destination_port or '' }} {{ rule.descr or '' }}">
+                <td class="col-checkbox">
+                    <input type="checkbox" class="rule-checkbox" value="{{ rule.id }}">
+                </td>
+                <td><span class="status-badge {{ rule.migration_status or 'pending' }}">{{ rule.migration_status or 'pending' }}</span></td>
+                <td>{{ rule.type or 'pass' }}</td>
+                <td>{{ rule.interface or '' }}</td>
+                <td>{{ rule.protocol or '' }}</td>
+                <td>
+                    {% if rule.source_type == 'any' %}any
+                    {% elif rule.source_not %}<em>not</em> {{ rule.source_value or '' }}
+                    {% else %}{{ rule.source_value or '' }}{% endif %}
+                </td>
+                <td>{{ rule.source_port or '' }}</td>
+                <td>
+                    {% if rule.destination_type == 'any' %}any
+                    {% elif rule.destination_not %}<em>not</em> {{ rule.destination_value or '' }}
+                    {% else %}{{ rule.destination_value or '' }}{% endif %}
+                </td>
+                <td>{{ rule.destination_port or '' }}</td>
+                <td>{{ rule.descr or '' }}</td>
+                <td>{% if rule.disabled %}Yes{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Confirmation modal -->
+<div id="migrate-modal" class="modal" style="display:none">
+    <div class="modal-content">
+        <h3>Confirm Migration</h3>
+        <p id="modal-message">Are you sure you want to migrate the selected firewall rules to Sophos?</p>
+        <p id="modal-count"></p>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+            <button class="btn btn-success" id="modal-confirm">Migrate</button>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="no-data">
+    <p>No firewall rules imported yet.</p>
+    <a href="{{ url_for('upload.upload_page') }}" class="btn btn-primary">Import pfSense Backup</a>
+</div>
+{% endif %}
+
+<script>
+window.SOPHOS_CONFIGURED = {{ 'true' if configured else 'false' }};
+window.ZONE_MAPPINGS = {{ zone_mappings|tojson }};
+window.NETWORK_MAPPINGS = {{ network_mappings|tojson }};
+window.PF_INTERFACES = {{ pf_interfaces|tojson }};
+window.PF_NETWORK_REFS = {{ pf_network_refs|tojson }};
+</script>
+<script src="{{ url_for('static', filename='js/migrate_fwrules.js') }}"></script>
+{% endblock %}

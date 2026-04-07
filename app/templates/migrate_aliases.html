@@ -9,6 +9,12 @@
     <span>Migrate Aliases</span>
 </nav>
 
+<div class="migrate-subnav">
+    <a href="{{ url_for('migrate.migrate_aliases') }}" class="active">Aliases</a>
+    <a href="{{ url_for('migrate.migrate_firewall_rules') }}">Firewall Rules</a>
+    <a href="{{ url_for('migrate.migrate_virtual_ips') }}">Virtual IPs</a>
+</div>
+
 <div class="page-header">
     <h1>Migrate Aliases</h1>
     <p>{{ aliases|length }} aliases — migrate pfSense aliases to Sophos objects</p>
@@ -113,10 +119,6 @@
             {% endfor %}
         </tbody>
     </table>
-</div>
-
-<div class="migrate-footer">
-    <a href="{{ url_for('migrate.migrate_virtual_ips') }}" class="btn btn-secondary">Virtual IPs (manual)</a>
 </div>
 
 <!-- Confirmation modal -->
