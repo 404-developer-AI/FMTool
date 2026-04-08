@@ -1148,12 +1148,68 @@ a:hover {
 
 .dryrun-warning {
     font-size: 0.85rem;
-    color: var(--color-warning);
     padding: 0.15rem 0;
 }
 
-.dryrun-warning::before {
+.dryrun-warning-red {
+    color: var(--color-danger, #e74c3c);
+}
+
+.dryrun-warning-red::before {
+    content: "\2716 ";
+}
+
+.dryrun-warning-orange {
+    color: var(--color-warning);
+}
+
+.dryrun-warning-orange::before {
     content: "\26A0 ";
+}
+
+.dryrun-warning-green {
+    color: var(--color-success, #27ae60);
+}
+
+.dryrun-warning-green::before {
+    content: "\2714 ";
+}
+
+/* Dry-run warning severity filters */
+.dryrun-warning-filters {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.dryrun-filter-btn {
+    opacity: 0.5;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
+    font-size: 0.8rem;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.dryrun-filter-btn.active {
+    opacity: 1;
+    font-weight: 600;
+}
+
+.dryrun-filter-red.active {
+    border-color: var(--color-danger, #e74c3c);
+    color: var(--color-danger, #e74c3c);
+}
+
+.dryrun-filter-orange.active {
+    border-color: var(--color-warning);
+    color: var(--color-warning);
+}
+
+.dryrun-filter-green.active {
+    border-color: var(--color-success, #27ae60);
+    color: var(--color-success, #27ae60);
 }
 
 /* Progress bar */

@@ -535,7 +535,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     # NAT-linked rules: migrate the firewall rule, ignore the NAT link
     assoc = rule_row.get("associated_rule_id") or ""
     if assoc:
-        plan.warnings.append("NAT-linked rule — the associated NAT rule will be migrated separately in v0.7")
+        plan.warnings.append({"level": "orange", "text": "NAT-linked rule — the associated NAT rule will be migrated separately in v0.7"})
 
     # Generate Sophos name
     name_base = descr if descr else f"pf_rule_{tracker}"
@@ -557,13 +557,13 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     if not src_zone:
         plan.action = "skip"
         plan.reason = f"Unmapped interface: '{interface}'. Configure zone mapping first."
-        plan.warnings.append(f"pfSense interface '{interface}' has no zone mapping")
+        plan.warnings.append({"level": "red", "text": f"pfSense interface '{interface}' has no zone mapping"})
         return plan
 
     # Destination zone: use override if provided, else default to Any
     dst_zone = dst_zone_override or "Any"
     if not dst_zone_override:
-        plan.warnings.append("Destination zone set to 'Any' — select a destination zone or verify on Sophos after migration")
+        plan.warnings.append({"level": "orange", "text": "Destination zone set to 'Any' — select a destination zone or verify on Sophos after migration"})
 
     # Resolve source network
     src_networks, src_warnings = _resolve_network(
@@ -586,9 +586,20 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
             network_mappings, migrated_alias_names, existing_object_names,
             sophos_ip_lookup=sophos_ip_lookup,
         )
-        plan.warnings.append(
-            f"Using NAT destination '{nat_destination}' as Dst Network (port forward public IP)"
+        # Check if IP was matched to a Sophos interface (green) or left as raw (red)
+        matched_iface = any(
+            isinstance(w, dict) and w.get("level") == "green" and "Matched IP" in w.get("text", "")
+            for w in dst_warnings
         )
+        if matched_iface:
+            # Merge NAT dest + matched interface into one green warning
+            iface_warning = next(w for w in dst_warnings if isinstance(w, dict) and "Matched IP" in w.get("text", ""))
+            dst_warnings = [w for w in dst_warnings if w is not iface_warning]
+            plan.warnings.append({"level": "green", "text": f"NAT destination '{nat_destination}' → {dst_networks[0]} (port forward public IP)"})
+        else:
+            plan.warnings.append(
+                {"level": "orange", "text": f"Using NAT destination '{nat_destination}' as Dst Network (port forward public IP)"}
+            )
     else:
         dst_networks, dst_warnings = _resolve_network(
             rule_row.get("destination_type", ""),
@@ -607,10 +618,10 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     if service_list is None:
         # Build proposed service names for auto-creation
         proposed = _propose_services(protocol, dst_port)
-        plan.warnings.append(
+        plan.warnings.append({"level": "red", "text":
             f"No matching Sophos service for {protocol}/{dst_port}. "
             "Create the service on Sophos first, then retry."
-        )
+        })
         missing_service_info = {
             "protocol": protocol,
             "port": dst_port,
@@ -621,7 +632,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     # Check for schedule
     raw_xml = rule_row.get("raw_xml") or ""
     if "<sched>" in raw_xml:
-        plan.warnings.append("Rule has a schedule in pfSense. Schedules are not migrated — configure manually on Sophos.")
+        plan.warnings.append({"level": "orange", "text": "Rule has a schedule in pfSense. Schedules are not migrated — configure manually on Sophos."})
 
     # Map action
     pf_type = rule_row.get("type") or "pass"
@@ -658,7 +669,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     plan.reason = f"Create rule: {sophos_action} from {src_zone} to {dst_zone}"
 
     if disabled:
-        plan.warnings.append("Rule is disabled in pfSense — will be created as disabled on Sophos")
+        plan.warnings.append({"level": "green", "text": "Rule is disabled in pfSense — will be created as disabled on Sophos"})
 
     return plan
 
@@ -739,10 +750,10 @@ def _resolve_network(type_field, value_field, not_field,
     warnings = []
 
     if not_field:
-        warnings.append(
+        warnings.append({"level": "orange", "text":
             f"Negation ('not') on '{value_field}' is not directly supported on Sophos. "
             "Verify rule logic after migration."
-        )
+        })
 
     if type_field == "any" or not type_field:
         return ["Any"], warnings
@@ -754,7 +765,7 @@ def _resolve_network(type_field, value_field, not_field,
         mapped = network_mappings.get(value)
         if mapped:
             return [mapped], warnings
-        warnings.append(f"Unmapped network reference: '{value}'. Configure in network alias mappings.")
+        warnings.append({"level": "red", "text": f"Unmapped network reference: '{value}'. Configure in network alias mappings."})
         return [value], warnings
 
     if type_field == "address":
@@ -774,12 +785,12 @@ def _resolve_network(type_field, value_field, not_field,
         if _is_ip_address(value) or _is_cidr(value):
             if sophos_ip_lookup and value in sophos_ip_lookup:
                 iface_name = sophos_ip_lookup[value]
-                warnings.append(f"Matched IP '{value}' to Sophos interface '{iface_name}'")
+                warnings.append({"level": "green", "text": f"Matched IP '{value}' to Sophos interface '{iface_name}'"})
                 return [iface_name], warnings
-            warnings.append(f"Raw IP '{value}' used — create an IP Host object on Sophos or use an existing one")
+            warnings.append({"level": "red", "text": f"Raw IP '{value}' used — create an IP Host object on Sophos or use an existing one"})
             return [value], warnings
 
-        warnings.append(f"Unknown reference: '{value}'. Migrate the alias first or configure a mapping.")
+        warnings.append({"level": "red", "text": f"Unknown reference: '{value}'. Migrate the alias first or configure a mapping."})
         return [sophos_name], warnings
 
     return ["Any"], warnings

@@ -537,7 +537,19 @@
             const actionClass = plan.action === 'create' ? 'dryrun-create' :
                                 plan.action === 'exists' ? 'dryrun-exists' : 'dryrun-skip';
 
-            html += `<div class="dryrun-item ${actionClass}">`;
+            // Determine highest warning severity for this plan
+            const severityOrder = {red: 3, orange: 2, green: 1};
+            let maxSeverity = 'none';
+            if (plan.warnings && plan.warnings.length > 0) {
+                for (const w of plan.warnings) {
+                    const level = (typeof w === 'object' && w.level) ? w.level : 'orange';
+                    if ((severityOrder[level] || 0) > (severityOrder[maxSeverity] || 0)) {
+                        maxSeverity = level;
+                    }
+                }
+            }
+
+            html += `<div class="dryrun-item ${actionClass}" data-severity="${maxSeverity}">`;
             html += `<div class="dryrun-item-header">`;
             html += `<strong>${escapeHtml(plan.rule_name || plan.pf_description || '(unnamed)')}</strong>`;
             html += `<span class="dryrun-action">${escapeHtml(plan.action)}</span>`;
@@ -583,7 +595,9 @@
             if (plan.warnings && plan.warnings.length > 0) {
                 html += '<div class="dryrun-warnings">';
                 for (const w of plan.warnings) {
-                    html += `<div class="dryrun-warning">${escapeHtml(w)}</div>`;
+                    const level = (typeof w === 'object' && w.level) ? w.level : 'orange';
+                    const text = (typeof w === 'object' && w.text) ? w.text : w;
+                    html += `<div class="dryrun-warning dryrun-warning-${level}">${escapeHtml(text)}</div>`;
                 }
                 html += '</div>';
             }
@@ -592,6 +606,20 @@
         }
         dryrunResults.innerHTML = html;
 
+        // Update warning severity counts
+        const items = dryrunResults.querySelectorAll('.dryrun-item');
+        const counts = {red: 0, orange: 0, green: 0, none: 0};
+        items.forEach(item => {
+            const sev = item.dataset.severity || 'none';
+            if (counts[sev] !== undefined) counts[sev]++;
+        });
+        const countRed = document.getElementById('dryrun-count-red');
+        const countOrange = document.getElementById('dryrun-count-orange');
+        const countGreen = document.getElementById('dryrun-count-green');
+        if (countRed) countRed.textContent = counts.red;
+        if (countOrange) countOrange.textContent = counts.orange;
+        if (countGreen) countGreen.textContent = counts.green;
+
         // Attach bulk create handler
         const btnCreateAll = document.getElementById('btn-create-all-services');
         if (btnCreateAll) {
@@ -599,6 +627,45 @@
                 createServicesOnSophos(allMissingServices, this);
             });
         }
+    }
+
+    // --- Dry-run warning severity filter ---
+    const dryrunFilterBtns = document.querySelectorAll('.dryrun-filter-btn');
+    dryrunFilterBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const filter = this.dataset.filter;
+            // Toggle active: allow multi-select by clicking, single-select on "all"
+            if (filter === 'all') {
+                dryrunFilterBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+            } else {
+                // Deactivate "all" when selecting a specific filter
+                dryrunFilterBtns.forEach(b => { if (b.dataset.filter === 'all') b.classList.remove('active'); });
+                this.classList.toggle('active');
+                // If nothing is active, re-activate "all"
+                const anyActive = [...dryrunFilterBtns].some(b => b.classList.contains('active'));
+                if (!anyActive) {
+                    dryrunFilterBtns.forEach(b => { if (b.dataset.filter === 'all') b.classList.add('active'); });
+                }
+            }
+            applyDryrunFilter();
+        });
+    });
+
+    function applyDryrunFilter() {
+        const activeFilters = [...dryrunFilterBtns]
+            .filter(b => b.classList.contains('active'))
+            .map(b => b.dataset.filter);
+        const showAll = activeFilters.includes('all');
+        const items = dryrunResults.querySelectorAll('.dryrun-item');
+        items.forEach(item => {
+            if (showAll) {
+                item.style.display = '';
+            } else {
+                const sev = item.dataset.severity || 'none';
+                item.style.display = activeFilters.includes(sev) ? '' : 'none';
+            }
+        });
     }
 
     // --- Create missing services on Sophos ---

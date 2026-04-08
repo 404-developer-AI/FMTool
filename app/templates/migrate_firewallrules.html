@@ -167,6 +167,13 @@
 <div id="dryrun-panel" class="dryrun-panel" style="display:none">
     <div class="dryrun-header">
         <h3>Dry Run Results</h3>
+        <div class="dryrun-warning-filters">
+            <button class="btn btn-small dryrun-filter-btn active" data-filter="all">All</button>
+            <button class="btn btn-small dryrun-filter-btn dryrun-filter-red" data-filter="red">Issues <span id="dryrun-count-red">0</span></button>
+            <button class="btn btn-small dryrun-filter-btn dryrun-filter-orange" data-filter="orange">Warnings <span id="dryrun-count-orange">0</span></button>
+            <button class="btn btn-small dryrun-filter-btn dryrun-filter-green" data-filter="green">OK <span id="dryrun-count-green">0</span></button>
+            <button class="btn btn-small dryrun-filter-btn" data-filter="none">No warnings</button>
+        </div>
         <div class="dryrun-actions">
             <button class="btn btn-success btn-small" id="btn-dryrun-execute" {% if not configured %}disabled{% endif %}>Proceed with Migration</button>
             <button class="btn btn-secondary btn-small" id="btn-dryrun-close">Dismiss</button>
