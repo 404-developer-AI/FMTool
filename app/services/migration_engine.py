@@ -929,3 +929,423 @@ def _check_duplicate(plan, existing_names, sophos_type, sophos_name):
     if sophos_name.lower() in existing_lower:
         plan.action = "exists"
         plan.reason = f"Object '{sophos_name}' already exists on Sophos as {sophos_type}"
+
+
+# --- NAT Rule Migration (DNAT / Port Forward) ---
+
+
+@dataclass
+class PlannedNatRule:
+    rule_id: int
+    rule_name: str
+    pf_description: str
+    action: str             # create, skip, exists
+    reason: str
+    nat_xml: str = ""
+    rule_params: dict = field(default_factory=dict)
+    warnings: list = field(default_factory=list)
+
+
+@dataclass
+class NatRuleMigrationResult:
+    rule_id: int
+    success: bool
+    status: str             # migrated, failed, skipped
+    rule_name: str = None
+    error: str = None
+
+
+def plan_nat_migration(rule_row, existing_nat_names, existing_services,
+                       existing_object_names, migrated_alias_names,
+                       sophos_ip_lookup, prev_rule_name=None,
+                       alias_address_lookup=None, orig_dest_override=None):
+    """Generate a migration plan for a single pfSense NAT (port forward) rule.
+
+    Args:
+        rule_row: dict from nat_rules table
+        existing_nat_names: set of existing Sophos NAT rule names
+        existing_services: list of service dicts with details
+        existing_object_names: dict of sets from get_existing_object_names()
+        migrated_alias_names: set of alias names migrated to Sophos
+        sophos_ip_lookup: dict {ip: "#InterfaceName"} for matching IPs
+        prev_rule_name: Sophos name of previously planned NAT rule (for ordering)
+        alias_address_lookup: optional dict {alias_name: address_string} for resolving alias IPs
+        orig_dest_override: optional Sophos interface reference (e.g. "#Port1:2") to override original destination
+
+    Returns:
+        PlannedNatRule
+    """
+    rule_id = rule_row["id"]
+    descr = rule_row.get("descr") or ""
+    protocol = rule_row.get("protocol") or ""
+
+    plan = PlannedNatRule(
+        rule_id=rule_id,
+        rule_name="",
+        pf_description=descr,
+        action="create",
+        reason="",
+    )
+
+    # Generate Sophos name
+    name_base = descr if descr else f"pf_nat_{rule_id}"
+    sophos_name = sanitize_sophos_name(name_base)
+    if not sophos_name:
+        sophos_name = f"pf_nat_{rule_id}"
+    plan.rule_name = sophos_name
+
+    # Check duplicate
+    existing_lower = {n.lower() for n in existing_nat_names}
+    if sophos_name.lower() in existing_lower:
+        plan.action = "exists"
+        plan.reason = f"NAT rule '{sophos_name}' already exists on Sophos"
+        return plan
+
+    # Status
+    disabled = rule_row.get("disabled", 0)
+    sophos_status = "Disable" if disabled else "Enable"
+    if disabled:
+        plan.warnings.append({"level": "green", "text": "Rule is disabled in pfSense — will be created as disabled on Sophos"})
+
+    # IPFamily
+    ipprotocol = rule_row.get("ipprotocol") or "inet"
+    ip_family = "IPv6" if ipprotocol == "inet6" else "IPv4"
+
+    # Position
+    position = "After" if prev_rule_name else "Top"
+
+    # --- Original Destination (WAN port / public IP) ---
+    dest_value = rule_row.get("destination_value") or ""
+    orig_dest_network = None
+    missing_host_info_orig = None
+
+    if orig_dest_override:
+        orig_dest_network = orig_dest_override
+        plan.warnings.append({"level": "green", "text": f"Original destination overridden to '{orig_dest_override}'"})
+    elif dest_value and sophos_ip_lookup and dest_value in sophos_ip_lookup:
+        orig_dest_network = sophos_ip_lookup[dest_value]
+        plan.warnings.append({"level": "green", "text": f"Original destination '{dest_value}' → {orig_dest_network} (Sophos interface)"})
+    elif dest_value and (_is_ip_address(dest_value) or _is_cidr(dest_value)):
+        # Check if a host object exists for this IP
+        all_names = set()
+        for names_set in existing_object_names.values():
+            all_names.update(n.lower() for n in names_set)
+        host_name = sanitize_sophos_name(f"pf_nat_dest_{dest_value.replace('.', '_')}")
+        if host_name.lower() in all_names:
+            orig_dest_network = host_name
+            plan.warnings.append({"level": "green", "text": f"Original destination '{dest_value}' → existing host '{host_name}'"})
+        else:
+            orig_dest_network = dest_value
+            plan.warnings.append({"level": "red", "text":
+                f"Original destination '{dest_value}' not matched to Sophos interface. "
+                "Map to an interface or create a host object."
+            })
+            missing_host_info_orig = {
+                "name": host_name,
+                "ip": dest_value,
+                "type": "original_destination",
+            }
+    elif dest_value:
+        # Could be an alias name
+        sophos_ref = sanitize_sophos_name(dest_value)
+        if sophos_ref.lower() in {n.lower() for n in migrated_alias_names}:
+            orig_dest_network = sophos_ref
+        else:
+            all_names = set()
+            for names_set in existing_object_names.values():
+                all_names.update(n.lower() for n in names_set)
+            if sophos_ref.lower() in all_names:
+                orig_dest_network = sophos_ref
+            else:
+                orig_dest_network = dest_value
+                plan.warnings.append({"level": "red", "text": f"Unknown original destination reference: '{dest_value}'"})
+    else:
+        plan.action = "skip"
+        plan.reason = "No destination value defined"
+        plan.warnings.append({"level": "red", "text": "NAT rule has no destination — cannot create DNAT rule"})
+        return plan
+
+    # --- Translated Destination (target / internal server) ---
+    target = rule_row.get("target") or ""
+    translated_dest = None
+    missing_host_info_target = None
+
+    if not target:
+        plan.action = "skip"
+        plan.reason = "No target (translated destination) defined"
+        plan.warnings.append({"level": "red", "text": "NAT rule has no target — cannot create DNAT rule"})
+        return plan
+
+    if _is_ip_address(target):
+        # Check if host object exists
+        target_host_name = sanitize_sophos_name(f"pf_nat_target_{target.replace('.', '_')}")
+        all_names = set()
+        for names_set in existing_object_names.values():
+            all_names.update(n.lower() for n in names_set)
+        if target_host_name.lower() in all_names:
+            translated_dest = target_host_name
+            plan.warnings.append({"level": "green", "text": f"Target '{target}' → existing host '{target_host_name}'"})
+        else:
+            # Check if any existing host matches this name pattern
+            alt_name = sanitize_sophos_name(target.replace(".", "_"))
+            if alt_name.lower() in all_names:
+                translated_dest = alt_name
+            else:
+                translated_dest = target_host_name
+                plan.warnings.append({"level": "red", "text":
+                    f"Target '{target}' needs a host object. Create '{target_host_name}' first."
+                })
+                missing_host_info_target = {
+                    "name": target_host_name,
+                    "ip": target,
+                    "type": "translated_destination",
+                }
+    else:
+        # Alias name
+        sophos_ref = sanitize_sophos_name(target)
+        if sophos_ref.lower() in {n.lower() for n in migrated_alias_names}:
+            translated_dest = sophos_ref
+            plan.warnings.append({"level": "green", "text": f"Target '{target}' → migrated alias '{sophos_ref}'"})
+        else:
+            all_names = set()
+            for names_set in existing_object_names.values():
+                all_names.update(n.lower() for n in names_set)
+            if sophos_ref.lower() in all_names:
+                translated_dest = sophos_ref
+            else:
+                translated_dest = sophos_ref
+                # Try to resolve alias IP from pfSense aliases for host creation
+                alias_ip = None
+                if alias_address_lookup:
+                    alias_ip = alias_address_lookup.get(target)
+                if alias_ip and _is_ip_address(alias_ip):
+                    plan.warnings.append({"level": "red", "text":
+                        f"Target alias '{target}' ({alias_ip}) not found on Sophos. Create host or migrate the alias first."
+                    })
+                    missing_host_info_target = {
+                        "name": sophos_ref,
+                        "ip": alias_ip,
+                        "type": "translated_destination",
+                    }
+                else:
+                    plan.warnings.append({"level": "red", "text":
+                        f"Target alias '{target}' not found on Sophos. Migrate the alias first."
+                    })
+
+    # --- Original Service (destination port) ---
+    dst_port = rule_row.get("destination_port") or ""
+    original_service = None
+    missing_service_orig = None
+
+    if dst_port:
+        service_list = _resolve_service(protocol, dst_port, existing_services, migrated_alias_names)
+        if service_list:
+            original_service = service_list[0] if len(service_list) == 1 else service_list[0]
+        else:
+            proposed = _propose_services(protocol, dst_port)
+            if proposed:
+                original_service = proposed[0]["name"]
+                plan.warnings.append({"level": "red", "text":
+                    f"No matching Sophos service for {protocol}/{dst_port}. "
+                    f"Create '{proposed[0]['name']}' first."
+                })
+                missing_service_orig = {
+                    "protocol": protocol,
+                    "port": dst_port,
+                    "proposed": proposed,
+                    "type": "original_service",
+                }
+    else:
+        plan.warnings.append({"level": "orange", "text": "No destination port — original service will be empty"})
+
+    # --- Translated Service (local port / PAT) ---
+    local_port = rule_row.get("local_port") or ""
+    translated_service = "Original"
+    missing_service_trans = None
+
+    if local_port and local_port != dst_port:
+        # Different port = PAT, need a separate service
+        service_list = _resolve_service(protocol, local_port, existing_services, migrated_alias_names)
+        if service_list:
+            translated_service = service_list[0]
+        else:
+            proposed = _propose_services(protocol, local_port)
+            if proposed:
+                translated_service = proposed[0]["name"]
+                plan.warnings.append({"level": "red", "text":
+                    f"No matching Sophos service for translated port {protocol}/{local_port}. "
+                    f"Create '{proposed[0]['name']}' first."
+                })
+                missing_service_trans = {
+                    "protocol": protocol,
+                    "port": local_port,
+                    "proposed": proposed,
+                    "type": "translated_service",
+                }
+    elif local_port and local_port == dst_port:
+        translated_service = "Original"
+        plan.warnings.append({"level": "green", "text": "Translated port same as original — using 'Original'"})
+
+    # Build rule_params for display and XML generation
+    rule_params = {
+        "name": sophos_name,
+        "description": descr[:200],
+        "ip_family": ip_family,
+        "status": sophos_status,
+        "position": position,
+        "original_destination": orig_dest_network,
+        "translated_destination": translated_dest,
+        "original_service": original_service,
+        "translated_service": translated_service,
+        "protocol": protocol,
+    }
+    if prev_rule_name:
+        rule_params["after_rule_name"] = prev_rule_name
+
+    # Collect missing objects
+    missing_services = []
+    if missing_service_orig:
+        missing_services.append(missing_service_orig)
+    if missing_service_trans:
+        missing_services.append(missing_service_trans)
+    if missing_services:
+        rule_params["_missing_services"] = missing_services
+
+    missing_hosts = []
+    if missing_host_info_orig:
+        missing_hosts.append(missing_host_info_orig)
+    if missing_host_info_target:
+        missing_hosts.append(missing_host_info_target)
+    if missing_hosts:
+        rule_params["_missing_hosts"] = missing_hosts
+
+    plan.rule_params = rule_params
+    plan.reason = f"Create DNAT: {orig_dest_network} → {translated_dest}"
+
+    # Build XML
+    plan.nat_xml = _build_nat_rule_xml(rule_params)
+
+    return plan
+
+
+def _build_nat_rule_xml(params):
+    """Build Sophos NATRule XML from rule_params dict.
+
+    Returns:
+        str: XML string for submit_xml()
+    """
+    name = _xml_escape(params.get("name", ""))
+    description = _xml_escape(params.get("description", ""))
+    ip_family = _xml_escape(params.get("ip_family", "IPv4"))
+    status = _xml_escape(params.get("status", "Enable"))
+    position = _xml_escape(params.get("position", "Top"))
+    orig_dest = _xml_escape(params.get("original_destination", ""))
+    trans_dest = _xml_escape(params.get("translated_destination", ""))
+    orig_svc = _xml_escape(params.get("original_service", ""))
+    trans_svc = _xml_escape(params.get("translated_service", "Original"))
+
+    xml = f"""<NATRule>
+  <Name>{name}</Name>
+  <Description>{description}</Description>
+  <IPFamily>{ip_family}</IPFamily>
+  <Status>{status}</Status>
+  <Position>{position}</Position>"""
+
+    if position == "After" and params.get("after_rule_name"):
+        after_name = _xml_escape(params["after_rule_name"])
+        xml += f"""
+  <After><Name>{after_name}</Name></After>"""
+
+    xml += f"""
+  <LinkedFirewallrule>None</LinkedFirewallrule>
+  <OriginalDestinationNetworks><Network>{orig_dest}</Network></OriginalDestinationNetworks>
+  <TranslatedDestination>{trans_dest}</TranslatedDestination>"""
+
+    if orig_svc:
+        xml += f"""
+  <OriginalServices><Service>{orig_svc}</Service></OriginalServices>"""
+
+    xml += f"""
+  <TranslatedService>{trans_svc}</TranslatedService>
+  <OverrideInterfaceNATPolicy>Disable</OverrideInterfaceNATPolicy>
+  <TranslatedSource>Original</TranslatedSource>
+  <NATMethod>0</NATMethod>
+  <HealthCheck>Disable</HealthCheck>
+</NATRule>"""
+
+    return xml
+
+
+def _xml_escape(value):
+    """Escape special XML characters."""
+    if not value:
+        return ""
+    return (str(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+
+def execute_nat_migration(client, planned_nat):
+    """Execute a NAT rule migration plan via submit_xml().
+
+    Args:
+        client: SophosFirewall SDK client
+        planned_nat: PlannedNatRule with action="create"
+
+    Returns:
+        NatRuleMigrationResult
+    """
+    if planned_nat.action != "create":
+        return NatRuleMigrationResult(
+            rule_id=planned_nat.rule_id,
+            success=planned_nat.action == "exists",
+            status="migrated" if planned_nat.action == "exists" else "skipped",
+            rule_name=planned_nat.rule_name,
+        )
+
+    try:
+        _retry_on_rate_limit(client.submit_xml, planned_nat.nat_xml)
+        logger.info("Created NAT rule: %s", planned_nat.rule_name)
+        return NatRuleMigrationResult(
+            rule_id=planned_nat.rule_id,
+            success=True,
+            status="migrated",
+            rule_name=planned_nat.rule_name,
+        )
+    except Exception as e:
+        logger.error("Failed to create NAT rule %s: %s", planned_nat.rule_name, e)
+        return NatRuleMigrationResult(
+            rule_id=planned_nat.rule_id,
+            success=False,
+            status="failed",
+            rule_name=planned_nat.rule_name,
+            error=str(e),
+        )
+
+
+def planned_nat_to_dict(plan):
+    """Serialize a PlannedNatRule to a JSON-safe dict."""
+    return {
+        "rule_id": plan.rule_id,
+        "rule_name": plan.rule_name,
+        "pf_description": plan.pf_description,
+        "action": plan.action,
+        "reason": plan.reason,
+        "rule_params": plan.rule_params,
+        "warnings": plan.warnings,
+        "nat_xml": plan.nat_xml,
+    }
+
+
+def nat_result_to_dict(result):
+    """Serialize a NatRuleMigrationResult to a JSON-safe dict."""
+    return {
+        "rule_id": result.rule_id,
+        "success": result.success,
+        "status": result.status,
+        "rule_name": result.rule_name,
+        "error": result.error,
+    }

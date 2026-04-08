@@ -3,13 +3,14 @@
 from flask import Blueprint, current_app, jsonify, render_template, request
 from app.models.database import (
     get_table_items, get_aliases_by_ids, get_firewall_rules_by_ids,
-    get_nat_destination_lookup, update_migration_status,
+    get_nat_rules_by_ids, get_nat_destination_lookup, update_migration_status,
     get_zone_mappings, save_zone_mapping, delete_zone_mapping,
     get_network_alias_mappings, save_network_alias_mapping, delete_network_alias_mapping,
 )
 from app.services.sophos_client import (
     is_configured, get_client, get_existing_object_names,
-    get_existing_fw_rule_names, get_zone_names, get_existing_services_with_details,
+    get_existing_fw_rule_names, get_existing_nat_rule_names,
+    get_zone_names, get_existing_services_with_details,
     get_interface_details, SophosConnectionError,
 )
 from app.services.migration_engine import (
@@ -17,6 +18,8 @@ from app.services.migration_engine import (
     plan_to_dict, result_to_dict,
     plan_fwrule_migration, execute_fwrule_migration,
     planned_rule_to_dict, rule_result_to_dict,
+    plan_nat_migration, execute_nat_migration,
+    planned_nat_to_dict, nat_result_to_dict,
     sanitize_sophos_name,
 )
 
@@ -574,6 +577,309 @@ def fetch_sophos_zones():
 @migrate_bp.route("/migrate/firewall-rules/sophos-interfaces", methods=["POST"])
 def fetch_sophos_interfaces():
     """AJAX: Fetch Sophos interface details (name, zone, IP, aliases) for dropdown."""
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    try:
+        interfaces = get_interface_details(current_app.config)
+        return jsonify({"success": True, "interfaces": interfaces})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to fetch interfaces: {e}"}), 500
+
+
+# --- NAT Rules Migration ---
+
+
+@migrate_bp.route("/migrate/nat-rules")
+def migrate_nat_rules():
+    """Render the NAT rules migration page."""
+    db_path = current_app.config["DATABASE_PATH"]
+    rules = get_table_items(db_path, "nat_rules")
+    configured = is_configured(current_app.config)
+
+    # Get unique pfSense interfaces from imported NAT rules
+    pf_interfaces = sorted({r["interface"] for r in rules if r.get("interface")})
+
+    return render_template(
+        "migrate_nat.html",
+        rules=rules,
+        configured=configured,
+        pf_interfaces=pf_interfaces,
+    )
+
+
+@migrate_bp.route("/migrate/nat-rules/check-duplicates", methods=["POST"])
+def check_nat_duplicates():
+    """AJAX: Check which NAT rules already exist on Sophos by name."""
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    rules = get_table_items(db_path, "nat_rules")
+    if not rules:
+        return jsonify({"success": True, "duplicates": []})
+
+    try:
+        existing_names = get_existing_nat_rule_names(current_app.config)
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to fetch Sophos NAT rules: {e}"}), 500
+
+    existing_lower = {n.lower(): n for n in existing_names}
+
+    duplicates = []
+    for rule in rules:
+        if rule.get("migration_status") in ("migrated", "skipped"):
+            continue
+        descr = rule.get("descr") or ""
+        name_base = descr if descr else f"pf_nat_{rule['id']}"
+        sophos_name = sanitize_sophos_name(name_base)
+        if sophos_name and sophos_name.lower() in existing_lower:
+            duplicates.append({
+                "rule_id": rule["id"],
+                "rule_name": sophos_name,
+            })
+
+    if duplicates:
+        dup_ids = [d["rule_id"] for d in duplicates]
+        update_migration_status(db_path, "nat_rules", dup_ids, "migrated")
+
+    return jsonify({"success": True, "duplicates": duplicates})
+
+
+@migrate_bp.route("/migrate/nat-rules/plan", methods=["POST"])
+def plan_nat_rules():
+    """AJAX: Generate dry-run migration plan for selected NAT rules."""
+    data = request.get_json()
+    if not data or "rule_ids" not in data:
+        return jsonify({"success": False, "message": "No rule IDs provided"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    rule_ids = data["rule_ids"]
+
+    rules = get_nat_rules_by_ids(db_path, rule_ids)
+    if not rules:
+        return jsonify({"success": False, "message": "No rules found"}), 404
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    try:
+        existing_nat_names = get_existing_nat_rule_names(current_app.config)
+        existing_services = get_existing_services_with_details(current_app.config)
+        existing_object_names = get_existing_object_names(current_app.config)
+        sophos_interfaces = get_interface_details(current_app.config)
+    except SophosConnectionError as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to fetch Sophos data: {e}"}), 500
+
+    sophos_ip_lookup = _build_sophos_ip_lookup(sophos_interfaces)
+
+    # Get migrated alias names and alias address lookup
+    aliases = get_table_items(db_path, "aliases")
+    migrated_alias_names = {a["name"] for a in aliases if a.get("migration_status") == "migrated"}
+    alias_address_lookup = {a["name"]: a.get("address", "") for a in aliases if a.get("address")}
+
+    # Original destination override from UI
+    orig_dest_override = data.get("orig_dest") or None
+
+    # Sort rules by ID to maintain order
+    rules.sort(key=lambda r: r["id"])
+
+    plans = []
+    prev_name = None
+    for rule in rules:
+        plan = plan_nat_migration(
+            rule, existing_nat_names, existing_services,
+            existing_object_names, migrated_alias_names,
+            sophos_ip_lookup, prev_rule_name=prev_name,
+            alias_address_lookup=alias_address_lookup,
+            orig_dest_override=orig_dest_override,
+        )
+        plans.append(planned_nat_to_dict(plan))
+        if plan.action == "create":
+            prev_name = plan.rule_name
+
+    return jsonify({"success": True, "plans": plans})
+
+
+@migrate_bp.route("/migrate/nat-rules/execute", methods=["POST"])
+def execute_nat_rules():
+    """AJAX: Execute migration for selected NAT rules."""
+    data = request.get_json()
+    if not data or "rule_ids" not in data:
+        return jsonify({"success": False, "message": "No rule IDs provided"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    rule_ids = data["rule_ids"]
+    orig_dest_override = data.get("orig_dest") or None
+
+    rules = get_nat_rules_by_ids(db_path, rule_ids)
+    if not rules:
+        return jsonify({"success": False, "message": "No rules found"}), 404
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    try:
+        client = get_client(current_app.config)
+        existing_nat_names = get_existing_nat_rule_names(current_app.config)
+        existing_services = get_existing_services_with_details(current_app.config)
+        existing_object_names = get_existing_object_names(current_app.config)
+        sophos_interfaces = get_interface_details(current_app.config)
+    except SophosConnectionError as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Failed to connect to Sophos: {e}"}), 500
+
+    sophos_ip_lookup = _build_sophos_ip_lookup(sophos_interfaces)
+    aliases = get_table_items(db_path, "aliases")
+    migrated_alias_names = {a["name"] for a in aliases if a.get("migration_status") == "migrated"}
+    alias_address_lookup = {a["name"]: a.get("address", "") for a in aliases if a.get("address")}
+
+    rules.sort(key=lambda r: r["id"])
+
+    results = []
+    prev_name = None
+    for rule in rules:
+        plan = plan_nat_migration(
+            rule, existing_nat_names, existing_services,
+            existing_object_names, migrated_alias_names,
+            sophos_ip_lookup, prev_rule_name=prev_name,
+            alias_address_lookup=alias_address_lookup,
+            orig_dest_override=orig_dest_override,
+        )
+        result = execute_nat_migration(client, plan)
+        update_migration_status(db_path, "nat_rules", [rule["id"]], result.status)
+        results.append(nat_result_to_dict(result))
+        if result.success and plan.action == "create":
+            prev_name = plan.rule_name
+
+    return jsonify({"success": True, "results": results})
+
+
+@migrate_bp.route("/migrate/nat-rules/skip", methods=["POST"])
+def skip_nat_rules():
+    """AJAX: Mark selected NAT rules as skipped."""
+    data = request.get_json()
+    if not data or "rule_ids" not in data:
+        return jsonify({"success": False, "message": "No rule IDs provided"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    rule_ids = data["rule_ids"]
+    updated = update_migration_status(db_path, "nat_rules", rule_ids, "skipped")
+    return jsonify({"success": True, "updated": updated})
+
+
+@migrate_bp.route("/migrate/nat-rules/reset", methods=["POST"])
+def reset_nat_rules():
+    """AJAX: Reset selected NAT rules back to pending status."""
+    data = request.get_json()
+    if not data or "rule_ids" not in data:
+        return jsonify({"success": False, "message": "No rule IDs provided"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    rule_ids = data["rule_ids"]
+    updated = update_migration_status(db_path, "nat_rules", rule_ids, "pending")
+    return jsonify({"success": True, "updated": updated})
+
+
+@migrate_bp.route("/migrate/nat-rules/create-services", methods=["POST"])
+def create_nat_missing_services():
+    """AJAX: Create missing services on Sophos for NAT rule migration.
+
+    Expects JSON: {"services": [{"name": "...", "protocol": "TCP", "port": "80", "ports": [...]}, ...]}
+    """
+    data = request.get_json()
+    if not data or not data.get("services"):
+        return jsonify({"success": False, "message": "No services provided"}), 400
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    try:
+        client = get_client(current_app.config)
+    except SophosConnectionError as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+    from app.services.sophos_client import _retry_on_rate_limit
+
+    results = []
+    for svc in data["services"]:
+        name = svc.get("name", "")
+        protocol = svc.get("protocol", "TCP")
+        port = svc.get("port", "")
+        ports = svc.get("ports", None)
+        if not name or (not port and not ports):
+            results.append({"name": name, "success": False, "error": "Missing name or port"})
+            continue
+        try:
+            if ports:
+                service_list = [{"dst_port": p, "protocol": protocol} for p in ports]
+            else:
+                service_list = [{"dst_port": port, "protocol": protocol}]
+
+            _retry_on_rate_limit(
+                client.create_service,
+                name=name,
+                service_type="TCPorUDP",
+                service_list=service_list,
+            )
+            results.append({"name": name, "success": True})
+        except Exception as e:
+            results.append({"name": name, "success": False, "error": str(e)})
+
+    created = sum(1 for r in results if r["success"])
+    failed = sum(1 for r in results if not r["success"])
+    return jsonify({"success": True, "results": results, "created": created, "failed": failed})
+
+
+@migrate_bp.route("/migrate/nat-rules/create-hosts", methods=["POST"])
+def create_nat_missing_hosts():
+    """AJAX: Create missing IP host objects on Sophos for NAT rule migration.
+
+    Expects JSON: {"hosts": [{"name": "pf_nat_target_1_2_3_4", "ip": "1.2.3.4"}, ...]}
+    """
+    data = request.get_json()
+    if not data or not data.get("hosts"):
+        return jsonify({"success": False, "message": "No hosts provided"}), 400
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    try:
+        client = get_client(current_app.config)
+    except SophosConnectionError as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+    from app.services.sophos_client import _retry_on_rate_limit
+
+    results = []
+    for host in data["hosts"]:
+        name = host.get("name", "")
+        ip = host.get("ip", "")
+        if not name or not ip:
+            results.append({"name": name, "success": False, "error": "Missing name or IP"})
+            continue
+        try:
+            _retry_on_rate_limit(
+                client.create_ip_host,
+                name=name,
+                ip_address=ip,
+                host_type="IP",
+            )
+            results.append({"name": name, "success": True})
+        except Exception as e:
+            results.append({"name": name, "success": False, "error": str(e)})
+
+    created = sum(1 for r in results if r["success"])
+    failed = sum(1 for r in results if not r["success"])
+    return jsonify({"success": True, "results": results, "created": created, "failed": failed})
+
+
+@migrate_bp.route("/migrate/nat-rules/sophos-interfaces", methods=["POST"])
+def fetch_nat_sophos_interfaces():
+    """AJAX: Fetch Sophos interface details for NAT rule mapping."""
     if not is_configured(current_app.config):
         return jsonify({"success": False, "message": "Sophos API not configured"}), 400
 

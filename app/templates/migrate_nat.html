@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Migrate NAT Rules{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+    <a href="{{ url_for('main.index') }}">Dashboard</a>
+    <span class="breadcrumb-sep">/</span>
+    <span>Migrate NAT Rules</span>
+</nav>
+
+<div class="migrate-subnav">
+    <a href="{{ url_for('migrate.migrate_aliases') }}">Aliases</a>
+    <a href="{{ url_for('migrate.migrate_firewall_rules') }}">Firewall Rules</a>
+    <a href="{{ url_for('migrate.migrate_nat_rules') }}" class="active">NAT Rules</a>
+    <a href="{{ url_for('migrate.migrate_virtual_ips') }}">Virtual IPs</a>
+</div>
+
+<div class="page-header">
+    <h1>Migrate NAT Rules (Port Forward)</h1>
+    <p>{{ rules|length }} rules — migrate pfSense port forwards to Sophos DNAT rules</p>
+</div>
+
+{% if not configured %}
+<div class="ssl-warning">
+    <strong>Sophos API not configured.</strong>
+    Configure your Sophos connection in <a href="{{ url_for('sophos.sophos_page') }}">Sophos Settings</a> before migrating.
+</div>
+{% endif %}
+
+{% if configured %}
+<div class="sync-status-bar" id="sync-status-bar">
+    <div class="sync-indicator">
+        <span class="sync-icon" id="sync-icon"></span>
+        <span class="sync-text" id="sync-text">Waiting for Sophos sync...</span>
+    </div>
+    <div class="sync-meta">
+        <span class="sync-timestamp" id="sync-timestamp"></span>
+        <button class="btn btn-small btn-secondary" id="btn-sync-refresh">Refresh</button>
+    </div>
+</div>
+{% endif %}
+
+{% if rules %}
+<div class="controls-bar">
+    <label class="select-all-label">
+        <input type="checkbox" id="select-all" class="select-all-checkbox">
+        Select all
+    </label>
+    <input type="text" class="search-input" id="search-input" placeholder="Search..." aria-label="Search rules">
+    <select class="filter-select" id="interface-filter" aria-label="Filter by interface">
+        <option value="">All interfaces</option>
+    </select>
+    <select class="filter-select" id="status-filter" aria-label="Filter by status">
+        <option value="">All statuses</option>
+    </select>
+    <select class="filter-select" id="disabled-filter" aria-label="Filter by enabled/disabled">
+        <option value="">All rules</option>
+        <option value="enabled">Enabled only</option>
+        <option value="disabled">Disabled only</option>
+    </select>
+    <span class="match-count">Showing <span id="visible-count">{{ rules|length }}</span> of {{ rules|length }}</span>
+</div>
+
+<div class="migrate-controls">
+    <div class="bulk-overrides">
+        <div class="dst-zone-control">
+            <label for="orig-dest-select">Original Dest:</label>
+            <select id="orig-dest-select" class="filter-select" {% if not configured %}disabled{% endif %}>
+                <option value="">(per rule)</option>
+            </select>
+        </div>
+        <button class="btn btn-small btn-secondary" id="btn-fetch-interfaces" {% if not configured %}disabled{% endif %}>Fetch from Sophos</button>
+    </div>
+    <button class="btn btn-secondary" id="btn-dryrun" {% if not configured %}disabled{% endif %}>Dry Run</button>
+    <button class="btn btn-success" id="btn-migrate" {% if not configured %}disabled{% endif %}>Migrate Selected</button>
+    <button class="btn btn-warning" id="btn-skip">Skip Selected</button>
+    <button class="btn btn-secondary" id="btn-reset">Reset to Pending</button>
+</div>
+
+<div id="dryrun-panel" class="dryrun-panel" style="display:none">
+    <div class="dryrun-header">
+        <h3>Dry Run Results</h3>
+        <div class="dryrun-warning-filters">
+            <button class="btn btn-small dryrun-filter-btn active" data-filter="all">All</button>
+            <button class="btn btn-small dryrun-filter-btn dryrun-filter-red" data-filter="red">Issues <span id="dryrun-count-red">0</span></button>
+            <button class="btn btn-small dryrun-filter-btn dryrun-filter-orange" data-filter="orange">Warnings <span id="dryrun-count-orange">0</span></button>
+            <button class="btn btn-small dryrun-filter-btn dryrun-filter-green" data-filter="green">OK <span id="dryrun-count-green">0</span></button>
+            <button class="btn btn-small dryrun-filter-btn" data-filter="none">No warnings</button>
+        </div>
+        <div class="dryrun-actions">
+            <button class="btn btn-success btn-small" id="btn-dryrun-execute" {% if not configured %}disabled{% endif %}>Proceed with Migration</button>
+            <button class="btn btn-secondary btn-small" id="btn-dryrun-close">Dismiss</button>
+        </div>
+    </div>
+    <div id="dryrun-results"></div>
+</div>
+
+<div id="progress-panel" class="progress-panel" style="display:none">
+    <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar" style="width:0%"></div>
+    </div>
+    <div class="progress-info" id="progress-info">Preparing migration...</div>
+</div>
+
+<div class="detail-table-wrapper">
+    <table class="detail-table migrate-table" id="nat-rules-table">
+        <thead>
+            <tr>
+                <th class="col-checkbox"></th>
+                <th class="sortable" data-col="status">Status</th>
+                <th class="sortable" data-col="interface">Interface</th>
+                <th class="sortable" data-col="protocol">Protocol</th>
+                <th class="sortable" data-col="destination">Destination (Public)</th>
+                <th class="sortable" data-col="dstport">Dst Port</th>
+                <th class="sortable" data-col="target">Target (Internal)</th>
+                <th class="sortable" data-col="localport">Local Port</th>
+                <th class="sortable" data-col="descr">Description</th>
+                <th class="sortable" data-col="disabled">Disabled</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rule in rules %}
+            <tr class="migrate-row{% if rule.disabled %} rule-disabled{% endif %}"
+                data-id="{{ rule.id }}"
+                data-interface="{{ rule.interface or '' }}"
+                data-status="{{ rule.migration_status or 'pending' }}"
+                data-disabled="{{ rule.disabled or 0 }}"
+                data-search="{{ rule.migration_status or 'pending' }} {{ rule.interface or '' }} {{ rule.protocol or '' }} {{ rule.destination_value or '' }} {{ rule.destination_port or '' }} {{ rule.target or '' }} {{ rule.local_port or '' }} {{ rule.descr or '' }}">
+                <td class="col-checkbox">
+                    <input type="checkbox" class="rule-checkbox" value="{{ rule.id }}">
+                </td>
+                <td><span class="status-badge {{ rule.migration_status or 'pending' }}">{{ rule.migration_status or 'pending' }}</span></td>
+                <td>{{ rule.interface or '' }}</td>
+                <td>{{ rule.protocol or '' }}</td>
+                <td>{{ rule.destination_value or '' }}</td>
+                <td>{{ rule.destination_port or '' }}</td>
+                <td>{{ rule.target or '' }}</td>
+                <td>{{ rule.local_port or '' }}</td>
+                <td>{{ rule.descr or '' }}</td>
+                <td>{% if rule.disabled %}Yes{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Confirmation modal -->
+<div id="migrate-modal" class="modal" style="display:none">
+    <div class="modal-content">
+        <h3>Confirm Migration</h3>
+        <p id="modal-message">Are you sure you want to migrate the selected NAT rules to Sophos?</p>
+        <p id="modal-count"></p>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
+            <button class="btn btn-success" id="modal-confirm">Migrate</button>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<div class="no-data">
+    <p>No NAT rules imported yet.</p>
+    <a href="{{ url_for('upload.upload_page') }}" class="btn btn-primary">Import pfSense Backup</a>
+</div>
+{% endif %}
+
+<script>
+window.SOPHOS_CONFIGURED = {{ 'true' if configured else 'false' }};
+</script>
+<script src="{{ url_for('static', filename='js/migrate_nat.js') }}"></script>
+{% endblock %}

@@ -229,6 +229,25 @@ def get_existing_fw_rule_names(app_config):
         return set()
 
 
+def get_existing_nat_rule_names(app_config):
+    """Fetch names of existing Sophos NAT rules for duplicate detection.
+
+    Uses get_tag("NATRule") since the SDK has no native NAT methods.
+
+    Returns:
+        set: Set of NAT rule name strings
+    """
+    client = get_client(app_config)
+    try:
+        response = _retry_on_rate_limit(client.get_tag, "NATRule")
+        return _extract_names(response, "NATRule")
+    except SophosFirewallZeroRecords:
+        return set()
+    except (SophosFirewallAPIError, Exception) as e:
+        logger.warning("Failed to fetch NAT rule names: %s", e)
+        return set()
+
+
 def get_interface_details(app_config):
     """Fetch Sophos interface details including IPs and interface aliases.
 

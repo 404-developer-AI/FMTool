@@ -1044,6 +1044,20 @@ def get_firewall_rules_by_ids(db_path, rule_ids):
     return [dict(r) for r in rows]
 
 
+def get_nat_rules_by_ids(db_path, rule_ids):
+    """Fetch specific NAT rule rows by ID list. Returns list of dicts."""
+    if not rule_ids:
+        return []
+    conn = get_db(db_path)
+    placeholders = ", ".join("?" for _ in rule_ids)
+    rows = conn.execute(
+        f"SELECT * FROM nat_rules WHERE id IN ({placeholders})",
+        list(rule_ids),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_nat_destination_lookup(db_path):
     """Build lookup: associated_rule_id → NAT destination_value.
 
