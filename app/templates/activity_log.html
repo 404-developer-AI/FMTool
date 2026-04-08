@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Activity Log — FMTool{% endblock %}
+
+{% block content %}
+<h1>Activity Log</h1>
+
+<div class="activity-filters">
+    <div class="filter-row">
+        <select id="filter-category">
+            <option value="">All Categories</option>
+            <option value="aliases">Aliases</option>
+            <option value="firewall_rules">Firewall Rules</option>
+            <option value="nat_rules">NAT Rules</option>
+            <option value="services">Services</option>
+            <option value="hosts">Hosts</option>
+            <option value="system">System</option>
+        </select>
+        <select id="filter-action">
+            <option value="">All Actions</option>
+            <option value="migrate">Migrate</option>
+            <option value="dry_run">Dry Run</option>
+            <option value="skip">Skip</option>
+            <option value="reset">Reset</option>
+            <option value="create_service">Create Service</option>
+            <option value="create_host">Create Host</option>
+            <option value="check_duplicates">Check Duplicates</option>
+            <option value="import">Import</option>
+            <option value="cleanup">Cleanup</option>
+            <option value="rollback">Rollback</option>
+        </select>
+        <select id="filter-result">
+            <option value="">All Results</option>
+            <option value="success">Success</option>
+            <option value="fail">Failed</option>
+            <option value="error">Error</option>
+        </select>
+        <input type="text" id="filter-search" placeholder="Search by name..." />
+        <input type="date" id="filter-date-from" title="From date" />
+        <input type="date" id="filter-date-to" title="To date" />
+        <button id="btn-refresh" class="btn btn-secondary">Refresh</button>
+    </div>
+</div>
+
+<div class="activity-table-container">
+    <table class="data-table" id="activity-table">
+        <thead>
+            <tr>
+                <th class="sortable" data-col="timestamp">Timestamp</th>
+                <th class="sortable" data-col="action_type">Action</th>
+                <th class="sortable" data-col="category">Category</th>
+                <th class="sortable" data-col="item_name">Item</th>
+                <th>Details</th>
+                <th class="sortable" data-col="result">Result</th>
+                <th>Error</th>
+            </tr>
+        </thead>
+        <tbody id="activity-body">
+            <tr><td colspan="7" class="text-muted">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="pagination" id="pagination">
+    <button id="btn-prev" class="btn btn-secondary" disabled>&laquo; Prev</button>
+    <span id="page-info">Page 1</span>
+    <button id="btn-next" class="btn btn-secondary" disabled>Next &raquo;</button>
+</div>
+
+<script src="{{ url_for('static', filename='js/activity_log.js') }}"></script>
+{% endblock %}

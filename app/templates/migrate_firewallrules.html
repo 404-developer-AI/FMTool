@@ -206,6 +206,7 @@
                 <th class="sortable" data-col="natdest">NAT Dest</th>
                 <th class="sortable" data-col="descr">Description</th>
                 <th class="sortable" data-col="disabled">Disabled</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -238,6 +239,7 @@
                 <td>{{ rule.nat_destination or '' }}</td>
                 <td>{{ rule.descr or '' }}</td>
                 <td>{% if rule.disabled %}Yes{% endif %}</td>
+                <td>{% if rule.migration_status and rule.migration_status != 'pending' %}<button class="btn-log btn-sm" data-id="{{ rule.id }}" data-name="{{ rule.descr or 'rule_' ~ rule.id }}" data-category="firewall_rules" title="View log">Log</button>{% endif %}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -263,6 +265,17 @@
     <a href="{{ url_for('upload.upload_page') }}" class="btn btn-primary">Import pfSense Backup</a>
 </div>
 {% endif %}
+
+<div id="log-modal" class="modal" style="display:none">
+    <div class="modal-content modal-content-wide">
+        <h3>Activity Log: <span id="log-modal-name"></span></h3>
+        <div id="log-modal-body" class="log-modal-scroll"></div>
+        <div class="modal-actions">
+            <a id="log-modal-fulllink" href="/activity-log" class="btn btn-secondary">Full Activity Log</a>
+            <button id="log-modal-close" class="btn">Close</button>
+        </div>
+    </div>
+</div>
 
 <script>
 window.SOPHOS_CONFIGURED = {{ 'true' if configured else 'false' }};

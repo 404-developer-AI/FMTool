@@ -489,20 +489,33 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({services: services}),
             });
-            const data = await resp.json();
-            if (data.success) {
-                showToast(`Created ${data.created} service(s)${data.failed > 0 ? `, ${data.failed} failed` : ''}`, data.failed > 0 ? 'warning' : 'success');
-                btn.textContent = '\u2713 Created';
-                btn.classList.remove('btn-warning');
-                btn.classList.add('btn-secondary');
-                if (lastDryrunIds.length > 0) {
-                    showToast('Re-running dry run to update results...', 'info');
-                    btnDryrun.click();
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const event = JSON.parse(line.slice(6));
+                    if (event.type === 'progress' && event.success !== undefined) {
+                        btn.textContent = `Creating ${event.index + 1}/${event.total}...`;
+                    } else if (event.type === 'done') {
+                        showToast(`Created ${event.created} service(s)${event.failed > 0 ? `, ${event.failed} failed` : ''}`, event.failed > 0 ? 'warning' : 'success');
+                        btn.textContent = '\u2713 Created';
+                        btn.classList.remove('btn-warning');
+                        btn.classList.add('btn-secondary');
+                        if (lastDryrunIds.length > 0) {
+                            showToast('Re-running dry run to update results...', 'info');
+                            btnDryrun.click();
+                        }
+                    }
                 }
-            } else {
-                showToast(data.message || 'Failed to create services', 'error');
-                btn.disabled = false;
-                btn.textContent = origText;
             }
         } catch (e) {
             showToast('Network error creating services', 'error');
@@ -524,20 +537,33 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({hosts: hosts}),
             });
-            const data = await resp.json();
-            if (data.success) {
-                showToast(`Created ${data.created} host(s)${data.failed > 0 ? `, ${data.failed} failed` : ''}`, data.failed > 0 ? 'warning' : 'success');
-                btn.textContent = '\u2713 Created';
-                btn.classList.remove('btn-warning');
-                btn.classList.add('btn-secondary');
-                if (lastDryrunIds.length > 0) {
-                    showToast('Re-running dry run to update results...', 'info');
-                    btnDryrun.click();
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const event = JSON.parse(line.slice(6));
+                    if (event.type === 'progress' && event.success !== undefined) {
+                        btn.textContent = `Creating ${event.index + 1}/${event.total}...`;
+                    } else if (event.type === 'done') {
+                        showToast(`Created ${event.created} host(s)${event.failed > 0 ? `, ${event.failed} failed` : ''}`, event.failed > 0 ? 'warning' : 'success');
+                        btn.textContent = '\u2713 Created';
+                        btn.classList.remove('btn-warning');
+                        btn.classList.add('btn-secondary');
+                        if (lastDryrunIds.length > 0) {
+                            showToast('Re-running dry run to update results...', 'info');
+                            btnDryrun.click();
+                        }
+                    }
                 }
-            } else {
-                showToast(data.message || 'Failed to create hosts', 'error');
-                btn.disabled = false;
-                btn.textContent = origText;
             }
         } catch (e) {
             showToast('Network error creating hosts', 'error');
@@ -610,7 +636,7 @@
         progressPanel.style.display = 'block';
         dryrunPanel.style.display = 'none';
         progressBar.style.width = '0%';
-        progressInfo.textContent = `Migrating 0 of ${ids.length}...`;
+        progressInfo.textContent = 'Fetching Sophos data...';
 
         try {
             const resp = await fetch('/migrate/nat-rules/execute', {
@@ -618,26 +644,40 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({rule_ids: ids, orig_dest: getSelectedOrigDest()}),
             });
-            const data = await resp.json();
 
-            if (data.success) {
-                let successCount = 0;
-                let failCount = 0;
-                data.results.forEach((result, i) => {
-                    progressBar.style.width = `${((i + 1) / ids.length) * 100}%`;
-                    updateRowStatus(result.rule_id, result.status);
-                    if (result.success) successCount++;
-                    else failCount++;
-                });
-                progressInfo.textContent = `Done: ${successCount} migrated, ${failCount} failed`;
-                if (failCount > 0) {
-                    showToast(`Migration completed with ${failCount} error(s)`, 'warning');
-                } else {
-                    showToast(`Successfully migrated ${successCount} NAT rule(s)`, 'success');
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const event = JSON.parse(line.slice(6));
+                    if (event.type === 'phase') {
+                        progressInfo.textContent = event.message;
+                    } else if (event.type === 'progress' && event.success !== undefined) {
+                        const pct = ((event.index + 1) / event.total) * 100;
+                        progressBar.style.width = pct + '%';
+                        progressInfo.textContent = `Migrating ${event.index + 1} of ${event.total}...`;
+                        updateRowStatus(event.item_id, event.status);
+                    } else if (event.type === 'done') {
+                        progressBar.style.width = '100%';
+                        progressInfo.textContent = `Done: ${event.migrated} migrated, ${event.failed} failed`;
+                        if (event.failed > 0) {
+                            showToast(`Migration completed with ${event.failed} error(s)`, 'warning');
+                        } else {
+                            showToast(`Successfully migrated ${event.migrated} NAT rule(s)`, 'success');
+                        }
+                    } else if (event.type === 'error') {
+                        showToast(event.message || 'Migration failed', 'error');
+                        progressInfo.textContent = 'Migration failed';
+                    }
                 }
-            } else {
-                showToast(data.message || 'Migration failed', 'error');
-                progressInfo.textContent = 'Migration failed';
             }
         } catch (e) {
             showToast('Network error during migration', 'error');

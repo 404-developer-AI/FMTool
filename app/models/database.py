@@ -448,6 +448,21 @@ def init_db(db_path):
             pfsense_value TEXT NOT NULL UNIQUE,
             sophos_object TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            category TEXT NOT NULL,
+            item_name TEXT,
+            item_id INTEGER,
+            details TEXT,
+            result TEXT NOT NULL,
+            error_message TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_activity_log_category ON activity_log(category);
+        CREATE INDEX IF NOT EXISTS idx_activity_log_item_name ON activity_log(item_name);
     """)
 
     conn.commit()
@@ -1147,6 +1162,7 @@ def cleanup_all(db_path, upload_folder):
 
     for table in DATA_TABLES:
         cur.execute(f"DELETE FROM {table}")
+    cur.execute("DELETE FROM activity_log")
     cur.execute("DELETE FROM imports")
 
     conn.commit()

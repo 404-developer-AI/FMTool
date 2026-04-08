@@ -298,9 +298,24 @@ a:hover {
     color: var(--color-text);
 }
 
-.btn-small {
+.btn-small, .btn-sm {
     padding: 0.35rem 0.75rem;
     font-size: 0.85rem;
+}
+
+.btn-log {
+    background: var(--color-surface-alt);
+    color: var(--color-text-muted);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.btn-log:hover {
+    color: var(--color-text);
+    border-color: var(--color-primary);
 }
 
 .btn-secondary {
@@ -453,6 +468,86 @@ a:hover {
     display: flex;
     gap: 1rem;
     justify-content: flex-end;
+}
+
+/* === Activity Log === */
+.activity-filters {
+    margin-bottom: 1.5rem;
+}
+
+.activity-filters .filter-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.activity-filters select,
+.activity-filters input[type="text"],
+.activity-filters input[type="date"] {
+    padding: 0.4rem 0.6rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    color: var(--color-text);
+    font-size: 0.85rem;
+}
+
+.activity-filters input[type="date"] {
+    max-width: 140px;
+}
+
+.activity-table-container {
+    overflow-x: auto;
+}
+
+.pagination {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1rem;
+    justify-content: center;
+}
+
+.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.sortable:hover {
+    color: var(--color-primary);
+}
+
+.sortable.sort-asc::after {
+    content: " \25B2";
+    font-size: 0.7em;
+}
+
+.sortable.sort-desc::after {
+    content: " \25BC";
+    font-size: 0.7em;
+}
+
+/* Wide modal for per-item log */
+.modal-content-wide {
+    max-width: 800px;
+    width: 95%;
+}
+
+.log-modal-scroll {
+    max-height: 400px;
+    overflow-y: auto;
+    margin-bottom: 1rem;
+}
+
+.log-modal-scroll table {
+    width: 100%;
+    font-size: 0.85rem;
+}
+
+.log-modal-scroll td,
+.log-modal-scroll th {
+    padding: 0.3rem 0.5rem;
 }
 
 /* === Category Overview (Dashboard) === */

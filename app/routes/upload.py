@@ -22,6 +22,8 @@ from app.models.database import (
     store_import,
 )
 from app.services.parser import ParseError, parse_pfsense_backup
+from app.services.activity_logger import log_activity
+from app.services.sophos_cache import cache_clear
 
 upload_bp = Blueprint("upload", __name__)
 
@@ -102,6 +104,9 @@ def upload_file():
 
     summary = get_import_summary(db_path)
     total = summary["total"] if summary else 0
+    log_activity(db_path, "import", "system",
+                 details={"filename": filename, "hostname": new_hostname,
+                          "domain": new_domain, "total_items": total})
     flash(f"Import successful: {total} items from {new_hostname}.{new_domain}", "success")
     return redirect(url_for("upload.upload_page"))
 
@@ -153,6 +158,8 @@ def cleanup():
     """Delete all imported data and uploaded files."""
     db_path = current_app.config["DATABASE_PATH"]
     upload_folder = current_app.config["UPLOAD_FOLDER"]
+    log_activity(db_path, "cleanup", "system", details={"action": "cleanup_all"})
     cleanup_all(db_path, upload_folder)
+    cache_clear()
     flash("All imported data has been deleted.", "success")
     return redirect(url_for("upload.upload_page"))

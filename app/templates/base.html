@@ -16,6 +16,7 @@
             <li><a href="{{ url_for('migrate.migrate_aliases') }}" class="{% if request.endpoint and request.endpoint.startswith('migrate.') %}active{% endif %}">Migrate</a></li>
             <li><a href="{{ url_for('sophos.sophos_page') }}" class="{% if request.endpoint and request.endpoint.startswith('sophos.') %}active{% endif %}">Sophos</a></li>
             <li><a href="{{ url_for('upload.upload_page') }}" class="{% if request.endpoint and request.endpoint.startswith('upload.') %}active{% endif %}">Import</a></li>
+            <li><a href="{{ url_for('activity_log.activity_log_page') }}" class="{% if request.endpoint and request.endpoint.startswith('activity_log.') %}active{% endif %}">Activity Log</a></li>
         </ul>
     </nav>
 

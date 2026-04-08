@@ -33,11 +33,13 @@ def create_app():
     from app.routes.sophos import sophos_bp
     from app.routes.upload import upload_bp
     from app.routes.migrate import migrate_bp
+    from app.routes.activity_log import activity_bp
 
     app.register_blueprint(main_bp)
     app.register_blueprint(overview_bp)
     app.register_blueprint(sophos_bp)
     app.register_blueprint(upload_bp)
     app.register_blueprint(migrate_bp)
+    app.register_blueprint(activity_bp)
 
     return app

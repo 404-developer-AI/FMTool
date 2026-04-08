@@ -91,6 +91,7 @@
                 <th class="sortable" data-col="type">Type</th>
                 <th class="sortable" data-col="address">Address</th>
                 <th class="sortable" data-col="descr">Description</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -116,6 +117,7 @@
                     {% endif %}
                 </td>
                 <td>{{ alias.descr or '' }}</td>
+                <td>{% if alias.migration_status and alias.migration_status != 'pending' %}<button class="btn-log btn-sm" data-id="{{ alias.id }}" data-name="{{ alias.name }}" data-category="aliases" title="View log">Log</button>{% endif %}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -141,6 +143,17 @@
     <a href="{{ url_for('upload.upload_page') }}" class="btn btn-primary">Import pfSense Backup</a>
 </div>
 {% endif %}
+
+<div id="log-modal" class="modal" style="display:none">
+    <div class="modal-content modal-content-wide">
+        <h3>Activity Log: <span id="log-modal-name"></span></h3>
+        <div id="log-modal-body" class="log-modal-scroll"></div>
+        <div class="modal-actions">
+            <a id="log-modal-fulllink" href="/activity-log" class="btn btn-secondary">Full Activity Log</a>
+            <button id="log-modal-close" class="btn">Close</button>
+        </div>
+    </div>
+</div>
 
 <script>window.SOPHOS_CONFIGURED = {{ 'true' if configured else 'false' }};</script>
 <script src="{{ url_for('static', filename='js/migrate.js') }}"></script>

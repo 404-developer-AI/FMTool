@@ -2,8 +2,9 @@
 
 import logging
 import time
-import urllib3
+from concurrent.futures import ThreadPoolExecutor
 
+import urllib3
 from requests.exceptions import ConnectionError, Timeout
 from sophosfirewall_python.firewallapi import SophosFirewall
 from sophosfirewall_python.api_client import (
@@ -11,6 +12,8 @@ from sophosfirewall_python.api_client import (
     SophosFirewallAuthFailure,
     SophosFirewallZeroRecords,
 )
+
+from app.services.sophos_cache import cache_get, cache_set, cache_invalidate
 
 # Suppress InsecureRequestWarning for self-signed certs
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -187,6 +190,10 @@ def get_existing_object_names(app_config):
     Returns:
         dict: {category: set of names} e.g. {"ip_hosts": {"host1", "host2"}, ...}
     """
+    cached = cache_get("existing_object_names")
+    if cached is not None:
+        return cached
+
     client = get_client(app_config)
     result = {}
 
@@ -209,6 +216,7 @@ def get_existing_object_names(app_config):
             logger.warning("Failed to fetch %s names: %s", key, e)
             result[key] = set()
 
+    cache_set("existing_object_names", result)
     return result
 
 
@@ -218,15 +226,22 @@ def get_existing_fw_rule_names(app_config):
     Returns:
         set: Set of rule name strings
     """
+    cached = cache_get("existing_fw_rule_names")
+    if cached is not None:
+        return cached
+
     client = get_client(app_config)
     try:
         response = _retry_on_rate_limit(client.get_fw_rule)
-        return _extract_names(response, "FirewallRule")
+        result = _extract_names(response, "FirewallRule")
     except SophosFirewallZeroRecords:
-        return set()
+        result = set()
     except (SophosFirewallAPIError, Exception) as e:
         logger.warning("Failed to fetch firewall rule names: %s", e)
-        return set()
+        result = set()
+
+    cache_set("existing_fw_rule_names", result)
+    return result
 
 
 def get_existing_nat_rule_names(app_config):
@@ -237,15 +252,22 @@ def get_existing_nat_rule_names(app_config):
     Returns:
         set: Set of NAT rule name strings
     """
+    cached = cache_get("existing_nat_rule_names")
+    if cached is not None:
+        return cached
+
     client = get_client(app_config)
     try:
         response = _retry_on_rate_limit(client.get_tag, "NATRule")
-        return _extract_names(response, "NATRule")
+        result = _extract_names(response, "NATRule")
     except SophosFirewallZeroRecords:
-        return set()
+        result = set()
     except (SophosFirewallAPIError, Exception) as e:
         logger.warning("Failed to fetch NAT rule names: %s", e)
-        return set()
+        result = set()
+
+    cache_set("existing_nat_rule_names", result)
+    return result
 
 
 def get_interface_details(app_config):
@@ -259,6 +281,10 @@ def get_interface_details(app_config):
               [{"name": "Port1_WAN", "hardware": "Port1", "zone": "WAN",
                 "ip": "1.2.3.4", "alias_ips": [{"name": "Port1:0", "ip": "1.2.3.5"}]}]
     """
+    cached = cache_get("interface_details")
+    if cached is not None:
+        return cached
+
     client = get_client(app_config)
 
     # Fetch interfaces
@@ -321,6 +347,7 @@ def get_interface_details(app_config):
             "alias_ips": alias_ips,
         })
 
+    cache_set("interface_details", interfaces)
     return interfaces
 
 
@@ -330,16 +357,23 @@ def get_zone_names(app_config):
     Returns:
         list: List of zone name strings, sorted
     """
+    cached = cache_get("zone_names")
+    if cached is not None:
+        return cached
+
     client = get_client(app_config)
     try:
         response = _retry_on_rate_limit(client.get_zone)
         names = _extract_names(response, "Zone")
-        return sorted(names)
+        result = sorted(names)
     except SophosFirewallZeroRecords:
-        return []
+        result = []
     except (SophosFirewallAPIError, Exception) as e:
         logger.warning("Failed to fetch zone names: %s", e)
-        return []
+        result = []
+
+    cache_set("zone_names", result)
+    return result
 
 
 def get_existing_services_with_details(app_config):
@@ -349,10 +383,15 @@ def get_existing_services_with_details(app_config):
         list: List of dicts with 'name' and 'details' keys.
               Each detail has 'protocol' and 'dst_port'.
     """
+    cached = cache_get("existing_services_with_details")
+    if cached is not None:
+        return cached
+
     client = get_client(app_config)
     try:
         response = _retry_on_rate_limit(client.get_service)
     except SophosFirewallZeroRecords:
+        cache_set("existing_services_with_details", [])
         return []
     except (SophosFirewallAPIError, Exception) as e:
         logger.warning("Failed to fetch service details: %s", e)
@@ -384,7 +423,57 @@ def get_existing_services_with_details(app_config):
                             "dst_port": d.get("DestinationPort", ""),
                         })
         services.append({"name": item["Name"], "details": details})
+
+    cache_set("existing_services_with_details", services)
     return services
+
+
+def parallel_fetch_sophos_data(app_config, *fetch_keys):
+    """Fetch multiple Sophos data sets in parallel using ThreadPoolExecutor.
+
+    Each fetch checks the cache first. Only uncached keys trigger API calls.
+
+    Args:
+        app_config: Flask app config dict.
+        *fetch_keys: Keys to fetch. Valid keys:
+            "object_names", "fw_rule_names", "nat_rule_names",
+            "services", "interfaces", "zones"
+
+    Returns:
+        dict: keyed by fetch_key with results.
+    """
+    fetch_map = {
+        "object_names": get_existing_object_names,
+        "fw_rule_names": get_existing_fw_rule_names,
+        "nat_rule_names": get_existing_nat_rule_names,
+        "services": get_existing_services_with_details,
+        "interfaces": get_interface_details,
+        "zones": get_zone_names,
+    }
+
+    results = {}
+    keys_to_fetch = []
+    for key in fetch_keys:
+        if key not in fetch_map:
+            continue
+        keys_to_fetch.append(key)
+
+    if not keys_to_fetch:
+        return results
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            key: executor.submit(fetch_map[key], app_config)
+            for key in keys_to_fetch
+        }
+        for key, future in futures.items():
+            try:
+                results[key] = future.result(timeout=60)
+            except Exception as e:
+                logger.warning("Parallel fetch failed for %s: %s", key, e)
+                results[key] = set() if "names" in key else []
+
+    return results
 
 
 def _extract_names(response, xml_tag):
