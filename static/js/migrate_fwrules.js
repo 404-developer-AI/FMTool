@@ -537,19 +537,17 @@
             const actionClass = plan.action === 'create' ? 'dryrun-create' :
                                 plan.action === 'exists' ? 'dryrun-exists' : 'dryrun-skip';
 
-            // Determine highest warning severity for this plan
-            const severityOrder = {red: 3, orange: 2, green: 1};
-            let maxSeverity = 'none';
+            // Collect all warning severity levels for this plan
+            const levels = new Set();
             if (plan.warnings && plan.warnings.length > 0) {
                 for (const w of plan.warnings) {
                     const level = (typeof w === 'object' && w.level) ? w.level : 'orange';
-                    if ((severityOrder[level] || 0) > (severityOrder[maxSeverity] || 0)) {
-                        maxSeverity = level;
-                    }
+                    levels.add(level);
                 }
             }
+            const severityAttr = levels.size > 0 ? [...levels].join(' ') : 'none';
 
-            html += `<div class="dryrun-item ${actionClass}" data-severity="${maxSeverity}">`;
+            html += `<div class="dryrun-item ${actionClass}" data-severity="${severityAttr}">`;
             html += `<div class="dryrun-item-header">`;
             html += `<strong>${escapeHtml(plan.rule_name || plan.pf_description || '(unnamed)')}</strong>`;
             html += `<span class="dryrun-action">${escapeHtml(plan.action)}</span>`;
@@ -606,12 +604,14 @@
         }
         dryrunResults.innerHTML = html;
 
-        // Update warning severity counts
+        // Update warning severity counts (a rule can have multiple levels)
         const items = dryrunResults.querySelectorAll('.dryrun-item');
         const counts = {red: 0, orange: 0, green: 0, none: 0};
         items.forEach(item => {
-            const sev = item.dataset.severity || 'none';
-            if (counts[sev] !== undefined) counts[sev]++;
+            const sevs = (item.dataset.severity || 'none').split(' ');
+            for (const s of sevs) {
+                if (counts[s] !== undefined) counts[s]++;
+            }
         });
         const countRed = document.getElementById('dryrun-count-red');
         const countOrange = document.getElementById('dryrun-count-orange');
@@ -662,8 +662,9 @@
             if (showAll) {
                 item.style.display = '';
             } else {
-                const sev = item.dataset.severity || 'none';
-                item.style.display = activeFilters.includes(sev) ? '' : 'none';
+                const sevs = (item.dataset.severity || 'none').split(' ');
+                const match = activeFilters.some(f => sevs.includes(f));
+                item.style.display = match ? '' : 'none';
             }
         });
     }
