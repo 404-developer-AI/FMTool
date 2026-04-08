@@ -23,6 +23,28 @@ from app.services.migration_engine import (
 migrate_bp = Blueprint("migrate", __name__)
 
 
+def _build_sophos_ip_lookup(interfaces):
+    """Build IP → #InterfaceName lookup from Sophos interface details.
+
+    Maps each interface IP (and alias IPs) to its Sophos reference name (prefixed with #).
+    """
+    lookup = {}
+    for iface in interfaces:
+        name = iface.get("name", "")
+        if not name:
+            continue
+        ref = f"#{name}"
+        ip = iface.get("ip", "")
+        if ip:
+            lookup[ip] = ref
+        for alias in iface.get("alias_ips", []):
+            alias_ip = alias.get("ip", "")
+            alias_name = alias.get("name", "")
+            if alias_ip and alias_name:
+                lookup[alias_ip] = f"#{alias_name}"
+    return lookup
+
+
 @migrate_bp.route("/migrate/aliases")
 def migrate_aliases():
     """Render the alias migration page."""
@@ -283,10 +305,14 @@ def plan_firewall_rules():
         existing_rule_names = get_existing_fw_rule_names(current_app.config)
         existing_services = get_existing_services_with_details(current_app.config)
         existing_object_names = get_existing_object_names(current_app.config)
+        sophos_interfaces = get_interface_details(current_app.config)
     except SophosConnectionError as e:
         return jsonify({"success": False, "message": str(e)}), 500
     except Exception as e:
         return jsonify({"success": False, "message": f"Failed to fetch Sophos data: {e}"}), 500
+
+    # Build IP → #InterfaceName lookup from Sophos interfaces
+    sophos_ip_lookup = _build_sophos_ip_lookup(sophos_interfaces)
 
     # Load mappings
     zone_maps = {m["pfsense_interface"]: m["sophos_zone"] for m in get_zone_mappings(db_path)}
@@ -318,6 +344,7 @@ def plan_firewall_rules():
             dst_zone_override=dst_zone_override,
             dst_network_override=dst_network_override,
             nat_destination=nat_dest,
+            sophos_ip_lookup=sophos_ip_lookup,
         )
         plans.append(planned_rule_to_dict(plan))
         if plan.action == "create":
@@ -350,10 +377,14 @@ def execute_firewall_rules():
         existing_rule_names = get_existing_fw_rule_names(current_app.config)
         existing_services = get_existing_services_with_details(current_app.config)
         existing_object_names = get_existing_object_names(current_app.config)
+        sophos_interfaces = get_interface_details(current_app.config)
     except SophosConnectionError as e:
         return jsonify({"success": False, "message": str(e)}), 500
     except Exception as e:
         return jsonify({"success": False, "message": f"Failed to connect to Sophos: {e}"}), 500
+
+    # Build IP → #InterfaceName lookup from Sophos interfaces
+    sophos_ip_lookup = _build_sophos_ip_lookup(sophos_interfaces)
 
     zone_maps = {m["pfsense_interface"]: m["sophos_zone"] for m in get_zone_mappings(db_path)}
     network_maps = {m["pfsense_value"]: m["sophos_object"] for m in get_network_alias_mappings(db_path)}
@@ -377,6 +408,7 @@ def execute_firewall_rules():
             dst_zone_override=dst_zone_override,
             dst_network_override=dst_network_override,
             nat_destination=nat_dest,
+            sophos_ip_lookup=sophos_ip_lookup,
         )
         result = execute_fwrule_migration(client, plan)
         update_migration_status(db_path, "firewall_rules", [rule["id"]], result.status)
@@ -499,15 +531,23 @@ def create_missing_services():
         name = svc.get("name", "")
         protocol = svc.get("protocol", "TCP")
         port = svc.get("port", "")
-        if not name or not port:
+        ports = svc.get("ports", None)
+        if not name or (not port and not ports):
             results.append({"name": name, "success": False, "error": "Missing name or port"})
             continue
         try:
+            if ports:
+                # Range service: multiple ServiceDetail entries
+                service_list = [{"dst_port": p, "protocol": protocol} for p in ports]
+            else:
+                # Single port service
+                service_list = [{"dst_port": port, "protocol": protocol}]
+
             _retry_on_rate_limit(
                 client.create_service,
                 name=name,
                 service_type="TCPorUDP",
-                service_list=[{"dst_port": port, "protocol": protocol}],
+                service_list=service_list,
             )
             results.append({"name": name, "success": True})
         except Exception as e:

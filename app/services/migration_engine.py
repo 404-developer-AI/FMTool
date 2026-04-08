@@ -499,7 +499,8 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
                           existing_rule_names, existing_services,
                           migrated_alias_names, existing_object_names,
                           prev_rule_name=None, dst_zone_override=None,
-                          dst_network_override=None, nat_destination=None):
+                          dst_network_override=None, nat_destination=None,
+                          sophos_ip_lookup=None):
     """Generate a migration plan for a single pfSense firewall rule.
 
     Args:
@@ -514,6 +515,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
         dst_zone_override: optional Sophos zone name for destination (bulk override)
         dst_network_override: optional Sophos object name for destination network (bulk override)
         nat_destination: optional NAT rule destination_value (public IP for port forwards)
+        sophos_ip_lookup: optional dict {ip: "#InterfaceName"} for matching raw IPs to Sophos interfaces
 
     Returns:
         PlannedRule
@@ -569,6 +571,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
         rule_row.get("source_value", ""),
         rule_row.get("source_not", 0),
         network_mappings, migrated_alias_names, existing_object_names,
+        sophos_ip_lookup=sophos_ip_lookup,
     )
     plan.warnings.extend(src_warnings)
 
@@ -581,6 +584,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
         dst_networks, dst_warnings = _resolve_network(
             "address", nat_destination, 0,
             network_mappings, migrated_alias_names, existing_object_names,
+            sophos_ip_lookup=sophos_ip_lookup,
         )
         plan.warnings.append(
             f"Using NAT destination '{nat_destination}' as Dst Network (port forward public IP)"
@@ -591,6 +595,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
             rule_row.get("destination_value", ""),
             rule_row.get("destination_not", 0),
             network_mappings, migrated_alias_names, existing_object_names,
+            sophos_ip_lookup=sophos_ip_lookup,
         )
     plan.warnings.extend(dst_warnings)
 
@@ -721,8 +726,12 @@ def rule_result_to_dict(result):
 
 
 def _resolve_network(type_field, value_field, not_field,
-                     network_mappings, migrated_alias_names, existing_object_names):
+                     network_mappings, migrated_alias_names, existing_object_names,
+                     sophos_ip_lookup=None):
     """Resolve a pfSense source/destination reference to Sophos object names.
+
+    Args:
+        sophos_ip_lookup: optional dict {ip_address: "#InterfaceName"} for matching raw IPs
 
     Returns:
         (list of network names, list of warning strings)
@@ -761,8 +770,12 @@ def _resolve_network(type_field, value_field, not_field,
         if sophos_name.lower() in all_names:
             return [sophos_name], warnings
 
-        # Check if it's a raw IP address (use as-is)
+        # Check if it's a raw IP address — match against Sophos interface IPs
         if _is_ip_address(value) or _is_cidr(value):
+            if sophos_ip_lookup and value in sophos_ip_lookup:
+                iface_name = sophos_ip_lookup[value]
+                warnings.append(f"Matched IP '{value}' to Sophos interface '{iface_name}'")
+                return [iface_name], warnings
             warnings.append(f"Raw IP '{value}' used — create an IP Host object on Sophos or use an existing one")
             return [value], warnings
 
@@ -803,22 +816,26 @@ def _resolve_service(protocol, dst_port, existing_services, migrated_alias_names
     if sophos_name and sophos_name.lower() in {n.lower() for n in migrated_alias_names}:
         return [sophos_name]
 
-    # For port ranges: try matching individual ports
+    # For port ranges: first try the new range service name
     if "-" in dst_port:
-        proposed = _propose_services(protocol, dst_port)
+        range_name = sanitize_sophos_name(f"pf_range_{protocol_upper}_{dst_port}")
         all_existing = {s["name"].lower(): s["name"] for s in existing_services}
+        if range_name.lower() in all_existing:
+            return [all_existing[range_name.lower()]]
+
+        # Fallback: check if old-style individual port services exist
+        proposed = _propose_services(protocol, dst_port)
         matched = []
-        for svc in proposed:
-            # Check by proposed name
-            if svc["name"].lower() in all_existing:
-                matched.append(all_existing[svc["name"].lower()])
+        for port in proposed[0].get("ports", [proposed[0]["port"]]):
+            old_name = sanitize_sophos_name(f"pf_svc_{protocol_upper}_{port}")
+            if old_name.lower() in all_existing:
+                matched.append(all_existing[old_name.lower()])
                 continue
-            # Check by port match
-            port_match = _match_sophos_service(protocol_upper, svc["port"], existing_services)
+            port_match = _match_sophos_service(protocol_upper, port, existing_services)
             if port_match:
                 matched.append(port_match)
                 continue
-        if len(matched) == len(proposed):
+        if matched and len(matched) == len(proposed[0].get("ports", [proposed[0]["port"]])):
             return matched
 
     return None
@@ -856,8 +873,9 @@ def _match_sophos_service(protocol, port, existing_services):
 def _propose_services(protocol, port_str):
     """Generate proposed Sophos service definitions for a port specification.
 
-    For port ranges like '25011-25012', splits into individual ports.
-    Returns list of dicts: [{"name": "pf_svc_tcp_25011", "protocol": "TCP", "port": "25011"}, ...]
+    For port ranges like '25021-25022', creates ONE service with multiple port entries.
+    For single ports, creates one service with one port entry.
+    Returns list of dicts with 'name', 'protocol', 'port', and optionally 'ports' (list).
     """
     if not protocol or not port_str:
         return []
@@ -866,29 +884,30 @@ def _propose_services(protocol, port_str):
     if proto_upper not in ("TCP", "UDP"):
         proto_upper = "TCP"
 
-    ports = []
     if "-" in port_str:
-        # Range like 25011-25012
+        # Port range → single service with multiple ServiceDetail entries
         parts = port_str.split("-")
         try:
             start = int(parts[0])
             end = int(parts[1])
-            for p in range(start, end + 1):
-                ports.append(str(p))
+            ports = [str(p) for p in range(start, end + 1)]
         except (ValueError, IndexError):
             ports = [port_str]
-    else:
-        ports = [port_str]
-
-    proposed = []
-    for p in ports:
-        name = sanitize_sophos_name(f"pf_svc_{proto_upper}_{p}")
-        proposed.append({
+        name = sanitize_sophos_name(f"pf_range_{proto_upper}_{port_str}")
+        return [{
             "name": name,
             "protocol": proto_upper,
-            "port": p,
-        })
-    return proposed
+            "port": port_str,
+            "ports": ports,
+        }]
+    else:
+        # Single port → single service, single entry
+        name = sanitize_sophos_name(f"pf_svc_{proto_upper}_{port_str}")
+        return [{
+            "name": name,
+            "protocol": proto_upper,
+            "port": port_str,
+        }]
 
 
 def _check_duplicate(plan, existing_names, sophos_type, sophos_name):
