@@ -161,6 +161,7 @@
     <button class="btn btn-secondary" id="btn-dryrun" {% if not configured %}disabled{% endif %}>Dry Run</button>
     <button class="btn btn-success" id="btn-migrate" {% if not configured %}disabled{% endif %}>Migrate Selected</button>
     <button class="btn btn-warning" id="btn-skip">Skip Selected</button>
+    <button class="btn btn-secondary" id="btn-reset">Reset to Pending</button>
 </div>
 
 <div id="dryrun-panel" class="dryrun-panel" style="display:none">
@@ -194,6 +195,7 @@
                 <th class="sortable" data-col="srcport">Src Port</th>
                 <th class="sortable" data-col="destination">Destination</th>
                 <th class="sortable" data-col="dstport">Dst Port</th>
+                <th class="sortable" data-col="natdest">NAT Dest</th>
                 <th class="sortable" data-col="descr">Description</th>
                 <th class="sortable" data-col="disabled">Disabled</th>
             </tr>
@@ -205,7 +207,7 @@
                 data-interface="{{ rule.interface or '' }}"
                 data-status="{{ rule.migration_status or 'pending' }}"
                 data-disabled="{{ rule.disabled or 0 }}"
-                data-search="{{ rule.migration_status or 'pending' }} {{ rule.type or '' }} {{ rule.interface or '' }} {{ rule.protocol or '' }} {{ rule.source_value or '' }} {{ rule.source_port or '' }} {{ rule.destination_value or '' }} {{ rule.destination_port or '' }} {{ rule.descr or '' }}">
+                data-search="{{ rule.migration_status or 'pending' }} {{ rule.type or '' }} {{ rule.interface or '' }} {{ rule.protocol or '' }} {{ rule.source_value or '' }} {{ rule.source_port or '' }} {{ rule.destination_value or '' }} {{ rule.destination_port or '' }} {{ rule.nat_destination or '' }} {{ rule.descr or '' }}">
                 <td class="col-checkbox">
                     <input type="checkbox" class="rule-checkbox" value="{{ rule.id }}">
                 </td>
@@ -225,6 +227,7 @@
                     {% else %}{{ rule.destination_value or '' }}{% endif %}
                 </td>
                 <td>{{ rule.destination_port or '' }}</td>
+                <td>{{ rule.nat_destination or '' }}</td>
                 <td>{{ rule.descr or '' }}</td>
                 <td>{% if rule.disabled %}Yes{% endif %}</td>
             </tr>

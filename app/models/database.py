@@ -1044,6 +1044,24 @@ def get_firewall_rules_by_ids(db_path, rule_ids):
     return [dict(r) for r in rows]
 
 
+def get_nat_destination_lookup(db_path):
+    """Build lookup: associated_rule_id → NAT destination_value.
+
+    Used to show the public IP from linked NAT rules in the firewall rules table
+    and auto-fill it as Sophos Dst Network during migration.
+
+    Returns:
+        dict: {associated_rule_id: destination_value}
+    """
+    conn = get_db(db_path)
+    rows = conn.execute(
+        "SELECT associated_rule_id, destination_value FROM nat_rules "
+        "WHERE destination_value IS NOT NULL AND destination_value != ''"
+    ).fetchall()
+    conn.close()
+    return {r["associated_rule_id"]: r["destination_value"] for r in rows}
+
+
 def get_zone_mappings(db_path):
     """Get all zone mappings. Returns list of dicts."""
     conn = get_db(db_path)

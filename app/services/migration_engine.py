@@ -499,7 +499,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
                           existing_rule_names, existing_services,
                           migrated_alias_names, existing_object_names,
                           prev_rule_name=None, dst_zone_override=None,
-                          dst_network_override=None):
+                          dst_network_override=None, nat_destination=None):
     """Generate a migration plan for a single pfSense firewall rule.
 
     Args:
@@ -513,6 +513,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
         prev_rule_name: Sophos name of previously planned rule (for ordering)
         dst_zone_override: optional Sophos zone name for destination (bulk override)
         dst_network_override: optional Sophos object name for destination network (bulk override)
+        nat_destination: optional NAT rule destination_value (public IP for port forwards)
 
     Returns:
         PlannedRule
@@ -571,10 +572,19 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     )
     plan.warnings.extend(src_warnings)
 
-    # Resolve destination network: use override if provided
+    # Resolve destination network: priority is UI override > NAT destination > rule's own destination
     if dst_network_override:
         dst_networks = [dst_network_override]
         dst_warnings = []
+    elif nat_destination:
+        # NAT-linked rule: use NAT dest address (public IP) as dst_network
+        dst_networks, dst_warnings = _resolve_network(
+            "address", nat_destination, 0,
+            network_mappings, migrated_alias_names, existing_object_names,
+        )
+        plan.warnings.append(
+            f"Using NAT destination '{nat_destination}' as Dst Network (port forward public IP)"
+        )
     else:
         dst_networks, dst_warnings = _resolve_network(
             rule_row.get("destination_type", ""),

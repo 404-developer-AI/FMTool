@@ -13,6 +13,7 @@
     const btnDryrun = document.getElementById('btn-dryrun');
     const btnMigrate = document.getElementById('btn-migrate');
     const btnSkip = document.getElementById('btn-skip');
+    const btnReset = document.getElementById('btn-reset');
     const dryrunPanel = document.getElementById('dryrun-panel');
     const dryrunResults = document.getElementById('dryrun-results');
     const btnDryrunExecute = document.getElementById('btn-dryrun-execute');
@@ -759,6 +760,39 @@
 
         btnSkip.disabled = false;
         btnSkip.textContent = 'Skip Selected';
+    });
+
+    // --- Reset to Pending ---
+    btnReset.addEventListener('click', async function() {
+        const ids = getSelectedIds();
+        if (ids.length === 0) {
+            showToast('Select at least one rule', 'warning');
+            return;
+        }
+        if (!confirm(`Reset ${ids.length} rule(s) to pending? This does NOT remove the rule from Sophos.`)) return;
+
+        btnReset.disabled = true;
+        btnReset.textContent = 'Updating...';
+
+        try {
+            const resp = await fetch('/migrate/firewall-rules/reset', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({rule_ids: ids}),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                ids.forEach(id => updateRowStatus(id, 'pending'));
+                showToast(`${data.updated} rule(s) reset to pending`, 'success');
+            } else {
+                showToast(data.message || 'Failed to reset', 'error');
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+        }
+
+        btnReset.disabled = false;
+        btnReset.textContent = 'Reset to Pending';
     });
 
     // --- Helpers ---

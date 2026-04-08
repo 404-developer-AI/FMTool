@@ -3,7 +3,7 @@
 from flask import Blueprint, current_app, jsonify, render_template, request
 from app.models.database import (
     get_table_items, get_aliases_by_ids, get_firewall_rules_by_ids,
-    update_migration_status,
+    get_nat_destination_lookup, update_migration_status,
     get_zone_mappings, save_zone_mapping, delete_zone_mapping,
     get_network_alias_mappings, save_network_alias_mapping, delete_network_alias_mapping,
 )
@@ -194,6 +194,12 @@ def migrate_firewall_rules():
     zone_maps = get_zone_mappings(db_path)
     network_maps = get_network_alias_mappings(db_path)
 
+    # Enrich rules with NAT destination address (public IP from linked NAT rules)
+    nat_lookup = get_nat_destination_lookup(db_path)
+    for rule in rules:
+        assoc = rule.get("associated_rule_id") or ""
+        rule["nat_destination"] = nat_lookup.get(assoc, "")
+
     # Get unique pfSense interfaces from imported rules
     pf_interfaces = sorted({r["interface"] for r in rules if r.get("interface")})
 
@@ -294,12 +300,16 @@ def plan_firewall_rules():
     dst_zone_override = data.get("dst_zone") or None
     dst_network_override = data.get("dst_network") or None
 
+    # NAT destination lookup for auto-filling dst_network on NAT-linked rules
+    nat_lookup = get_nat_destination_lookup(db_path)
+
     # Sort rules by ID to maintain order
     rules.sort(key=lambda r: r["id"])
 
     plans = []
     prev_name = None
     for rule in rules:
+        nat_dest = nat_lookup.get(rule.get("associated_rule_id", ""), "")
         plan = plan_fwrule_migration(
             rule, zone_maps, network_maps,
             existing_rule_names, existing_services,
@@ -307,6 +317,7 @@ def plan_firewall_rules():
             prev_rule_name=prev_name,
             dst_zone_override=dst_zone_override,
             dst_network_override=dst_network_override,
+            nat_destination=nat_dest,
         )
         plans.append(planned_rule_to_dict(plan))
         if plan.action == "create":
@@ -349,11 +360,15 @@ def execute_firewall_rules():
     aliases = get_table_items(db_path, "aliases")
     migrated_alias_names = {a["name"] for a in aliases if a.get("migration_status") == "migrated"}
 
+    # NAT destination lookup for auto-filling dst_network on NAT-linked rules
+    nat_lookup = get_nat_destination_lookup(db_path)
+
     rules.sort(key=lambda r: r["id"])
 
     results = []
     prev_name = None
     for rule in rules:
+        nat_dest = nat_lookup.get(rule.get("associated_rule_id", ""), "")
         plan = plan_fwrule_migration(
             rule, zone_maps, network_maps,
             existing_rule_names, existing_services,
@@ -361,6 +376,7 @@ def execute_firewall_rules():
             prev_rule_name=prev_name,
             dst_zone_override=dst_zone_override,
             dst_network_override=dst_network_override,
+            nat_destination=nat_dest,
         )
         result = execute_fwrule_migration(client, plan)
         update_migration_status(db_path, "firewall_rules", [rule["id"]], result.status)
@@ -381,6 +397,19 @@ def skip_firewall_rules():
     db_path = current_app.config["DATABASE_PATH"]
     rule_ids = data["rule_ids"]
     updated = update_migration_status(db_path, "firewall_rules", rule_ids, "skipped")
+    return jsonify({"success": True, "updated": updated})
+
+
+@migrate_bp.route("/migrate/firewall-rules/reset", methods=["POST"])
+def reset_firewall_rules():
+    """AJAX: Reset selected firewall rules back to pending status."""
+    data = request.get_json()
+    if not data or "rule_ids" not in data:
+        return jsonify({"success": False, "message": "No rule IDs provided"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    rule_ids = data["rule_ids"]
+    updated = update_migration_status(db_path, "firewall_rules", rule_ids, "pending")
     return jsonify({"success": True, "updated": updated})
 
 
