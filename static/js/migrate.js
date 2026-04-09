@@ -549,6 +549,90 @@
         btnDryrun.disabled = false;
     }
 
+    // --- NAT Host rollback ---
+    const btnRollbackNatHosts = document.getElementById('btn-rollback-nat-hosts');
+    const natHostSelectAll = document.getElementById('nat-host-select-all');
+
+    if (natHostSelectAll) {
+        natHostSelectAll.addEventListener('change', function() {
+            document.querySelectorAll('.nat-host-checkbox').forEach(cb => {
+                cb.checked = natHostSelectAll.checked;
+            });
+        });
+    }
+
+    if (btnRollbackNatHosts) {
+        btnRollbackNatHosts.addEventListener('click', async function() {
+            const selected = Array.from(document.querySelectorAll('.nat-host-checkbox:checked'))
+                .map(cb => cb.value);
+
+            if (selected.length === 0) {
+                showToast('Select at least one host', 'warning');
+                return;
+            }
+
+            if (!confirm(`Delete ${selected.length} host(s) from Sophos?`)) return;
+
+            btnRollbackNatHosts.disabled = true;
+            progressPanel.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressInfo.textContent = 'Rolling back NAT hosts...';
+
+            try {
+                const resp = await fetch('/migrate/hosts/rollback', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({host_names: selected}),
+                });
+
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let deletedCount = 0;
+
+                while (true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, {stream: true});
+
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        const event = JSON.parse(line.slice(6));
+
+                        if (event.type === 'progress' && event.success !== undefined) {
+                            const pct = ((event.index + 1) / event.total) * 100;
+                            progressBar.style.width = pct + '%';
+                            progressInfo.textContent = `Rolling back ${event.index + 1} of ${event.total}...`;
+                            if (event.success) {
+                                deletedCount++;
+                                // Remove row from DOM
+                                const row = document.querySelector(`.nat-host-row[data-name="${event.item_name}"]`);
+                                if (row) row.remove();
+                            }
+                        } else if (event.type === 'done') {
+                            progressBar.style.width = '100%';
+                            progressInfo.textContent = `Done: ${event.deleted} rolled back, ${event.failed} failed`;
+                            if (event.failed > 0) {
+                                showToast(`Rollback completed with ${event.failed} error(s)`, 'warning');
+                            } else {
+                                showToast(`Successfully rolled back ${event.deleted} host(s)`, 'success');
+                            }
+                        } else if (event.type === 'error') {
+                            showToast(event.message || 'Rollback failed', 'error');
+                        }
+                    }
+                }
+            } catch (e) {
+                showToast('Network error', 'error');
+            }
+
+            btnRollbackNatHosts.disabled = false;
+        });
+    }
+
     // --- Sophos sync: duplicate check with caching ---
     const SYNC_CACHE_KEY = 'fmtool_sophos_sync';
     const SYNC_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour

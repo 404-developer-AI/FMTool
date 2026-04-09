@@ -1349,3 +1349,131 @@ def nat_result_to_dict(result):
         "rule_name": result.rule_name,
         "error": result.error,
     }
+
+
+# --- Service dependency analysis ---
+
+
+def analyze_required_services(fw_rules, nat_rules, existing_services,
+                              migrated_alias_names, created_service_names):
+    """Analyze all FW and NAT rules to build a complete service dependency overview.
+
+    Args:
+        fw_rules: List of firewall rule dicts from DB
+        nat_rules: List of NAT rule dicts from DB
+        existing_services: List of Sophos service dicts (with details)
+        migrated_alias_names: Set of alias names already migrated
+        created_service_names: Set of service names created by FMTool (from sophos_objects)
+
+    Returns:
+        List of dicts, one per unique service:
+        {
+            name, protocol, port, ports (optional),
+            status: 'exists' | 'migrated' | 'pending',
+            used_by: [{type: 'fw'|'nat', id, descr}],
+        }
+    """
+    # Collect all unique service requirements
+    service_map = {}  # key: proposed service name → service info
+
+    for rule in fw_rules:
+        protocol = rule.get("protocol", "")
+        dst_port = rule.get("destination_port", "")
+        if not protocol or not dst_port:
+            continue
+
+        # Check if this service is already resolved
+        resolved = _resolve_service(protocol, dst_port, existing_services,
+                                    migrated_alias_names)
+        if resolved is not None:
+            # Service exists on Sophos — check if it was created by us
+            for svc_name in resolved:
+                key = svc_name.lower()
+                if key not in service_map:
+                    is_ours = svc_name in created_service_names
+                    service_map[key] = {
+                        "name": svc_name,
+                        "protocol": protocol.upper(),
+                        "port": dst_port,
+                        "status": "migrated" if is_ours else "exists",
+                        "used_by": [],
+                    }
+                service_map[key]["used_by"].append({
+                    "type": "fw",
+                    "id": rule["id"],
+                    "descr": rule.get("descr") or f"rule_{rule['id']}",
+                })
+            continue
+
+        # Service not found — propose creation
+        proposed = _propose_services(protocol, dst_port)
+        for svc in proposed:
+            key = svc["name"].lower()
+            if key not in service_map:
+                is_ours = svc["name"] in created_service_names
+                service_map[key] = {
+                    "name": svc["name"],
+                    "protocol": svc["protocol"],
+                    "port": svc["port"],
+                    "status": "migrated" if is_ours else "pending",
+                }
+                if "ports" in svc:
+                    service_map[key]["ports"] = svc["ports"]
+                service_map[key]["used_by"] = []
+            service_map[key]["used_by"].append({
+                "type": "fw",
+                "id": rule["id"],
+                "descr": rule.get("descr") or f"rule_{rule['id']}",
+            })
+
+    # NAT rules: check destination_port and local_port
+    for rule in nat_rules:
+        protocol = rule.get("protocol", "")
+        for port_field in ("destination_port", "local_port"):
+            dst_port = rule.get(port_field, "")
+            if not protocol or not dst_port:
+                continue
+
+            resolved = _resolve_service(protocol, dst_port, existing_services,
+                                        migrated_alias_names)
+            if resolved is not None:
+                for svc_name in resolved:
+                    key = svc_name.lower()
+                    if key not in service_map:
+                        is_ours = svc_name in created_service_names
+                        service_map[key] = {
+                            "name": svc_name,
+                            "protocol": protocol.upper(),
+                            "port": dst_port,
+                            "status": "migrated" if is_ours else "exists",
+                            "used_by": [],
+                        }
+                    ref = {"type": "nat", "id": rule["id"],
+                           "descr": rule.get("descr") or f"nat_{rule['id']}"}
+                    if ref not in service_map[key]["used_by"]:
+                        service_map[key]["used_by"].append(ref)
+                continue
+
+            proposed = _propose_services(protocol, dst_port)
+            for svc in proposed:
+                key = svc["name"].lower()
+                if key not in service_map:
+                    is_ours = svc["name"] in created_service_names
+                    service_map[key] = {
+                        "name": svc["name"],
+                        "protocol": svc["protocol"],
+                        "port": svc["port"],
+                        "status": "migrated" if is_ours else "pending",
+                    }
+                    if "ports" in svc:
+                        service_map[key]["ports"] = svc["ports"]
+                    service_map[key]["used_by"] = []
+                ref = {"type": "nat", "id": rule["id"],
+                       "descr": rule.get("descr") or f"nat_{rule['id']}"}
+                if ref not in service_map[key]["used_by"]:
+                    service_map[key]["used_by"].append(ref)
+
+    # Sort: pending first, then migrated, then exists
+    status_order = {"pending": 0, "migrated": 1, "exists": 2}
+    return sorted(service_map.values(),
+                  key=lambda s: (status_order.get(s["status"], 9), s["name"].lower()))

@@ -26,7 +26,7 @@ from app.services.migration_engine import (
     planned_rule_to_dict, rule_result_to_dict,
     plan_nat_migration, execute_nat_migration,
     planned_nat_to_dict, nat_result_to_dict,
-    sanitize_sophos_name,
+    sanitize_sophos_name, analyze_required_services,
 )
 from app.services.activity_logger import log_activity
 from app.services.rollback_engine import (
@@ -49,6 +49,7 @@ CATEGORY_TABLE_MAP = {
     "aliases": "aliases",
     "firewall-rules": "firewall_rules",
     "nat-rules": "nat_rules",
+    "services": "services",
 }
 
 
@@ -85,10 +86,18 @@ def migrate_aliases():
     db_path = current_app.config["DATABASE_PATH"]
     aliases = get_table_items(db_path, "aliases")
     configured = is_configured(current_app.config)
+    # Get auto-created NAT hosts from sophos_objects
+    conn = get_db(db_path)
+    nat_hosts = [dict(r) for r in conn.execute(
+        "SELECT * FROM sophos_objects WHERE sophos_type = 'IPHost' "
+        "AND source_table = 'nat_rules' ORDER BY sophos_name"
+    ).fetchall()]
+    conn.close()
     return render_template(
         "migrate_aliases.html",
         aliases=aliases,
         configured=configured,
+        nat_hosts=nat_hosts,
     )
 
 
@@ -305,6 +314,241 @@ def skip_virtual_ips():
     updated = update_migration_status(db_path, "virtual_ips", vip_ids, "skipped")
     log_activity(db_path, "skip", "system", details={"table": "virtual_ips", "count": updated})
     return jsonify({"success": True, "updated": updated})
+
+
+# --- Services Migration ---
+
+
+@migrate_bp.route("/migrate/services")
+def migrate_services():
+    """Render the Services migration page."""
+    configured = is_configured(current_app.config)
+    return render_template("migrate_services.html", configured=configured)
+
+
+@migrate_bp.route("/migrate/services/analyze", methods=["POST"])
+def analyze_services():
+    """AJAX: Analyze all FW/NAT rules to build service dependency overview."""
+    db_path = current_app.config["DATABASE_PATH"]
+    app_config = dict(current_app.config)
+
+    if not is_configured(app_config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    try:
+        fw_rules = get_table_items(db_path, "firewall_rules")
+        nat_rules = get_table_items(db_path, "nat_rules")
+        existing_services = get_existing_services_with_details(app_config)
+
+        # Get names of services created by FMTool
+        from app.models.database import get_db
+        conn = get_db(db_path)
+        rows = conn.execute(
+            "SELECT sophos_name FROM sophos_objects WHERE sophos_type = 'Service'"
+        ).fetchall()
+        conn.close()
+        created_service_names = {r["sophos_name"] for r in rows}
+
+        # Get migrated alias names for service matching
+        aliases = get_table_items(db_path, "aliases")
+        migrated_alias_names = {a["name"] for a in aliases
+                                if a.get("migration_status") == "migrated"}
+
+        services = analyze_required_services(
+            fw_rules, nat_rules, existing_services,
+            migrated_alias_names, created_service_names)
+
+        return jsonify({"success": True, "services": services})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+@migrate_bp.route("/migrate/services/create", methods=["POST"])
+def create_services_from_tab():
+    """SSE: Create selected pending services on Sophos."""
+    data = request.get_json()
+    if not data or not data.get("services"):
+        return jsonify({"success": False, "message": "No services provided"}), 400
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    app_config = dict(current_app.config)
+    db_path = current_app.config["DATABASE_PATH"]
+    services = data["services"]
+
+    try:
+        client = get_client(app_config)
+    except SophosConnectionError as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+    def generate():
+        total = len(services)
+        created = 0
+        failed_count = 0
+
+        for i, svc in enumerate(services):
+            name = svc.get("name", "")
+            protocol = svc.get("protocol", "TCP")
+            port = svc.get("port", "")
+            ports = svc.get("ports", None)
+
+            yield _sse_event({"type": "progress", "index": i, "total": total,
+                              "item_name": name, "status": "creating"})
+
+            if not name or (not port and not ports):
+                failed_count += 1
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_name": name, "status": "failed", "success": False,
+                                  "error": "Missing name or port"})
+                continue
+
+            try:
+                if ports:
+                    service_list = [{"dst_port": p, "protocol": protocol} for p in ports]
+                else:
+                    service_list = [{"dst_port": port, "protocol": protocol}]
+
+                _retry_on_rate_limit(
+                    client.create_service,
+                    name=name,
+                    service_type="TCPorUDP",
+                    service_list=service_list,
+                )
+                created += 1
+                cache_invalidate("existing_services_with_details", "existing_object_names")
+                log_activity(db_path, "create_service", "services", name, result="success")
+                insert_sophos_object(
+                    db_path, "services", 0, name, "Service", is_member=False)
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_name": name, "status": "created", "success": True})
+            except Exception as e:
+                failed_count += 1
+                log_activity(db_path, "create_service", "services", name,
+                             result="fail", error_message=str(e))
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_name": name, "status": "failed", "success": False,
+                                  "error": str(e)})
+
+        yield _sse_event({"type": "done", "total": total, "created": created, "failed": failed_count})
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@migrate_bp.route("/migrate/services/rollback", methods=["POST"])
+def rollback_services():
+    """SSE: Rollback (delete) selected services from Sophos."""
+    data = request.get_json()
+    if not data or not data.get("service_names"):
+        return jsonify({"success": False, "message": "No services provided"}), 400
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    app_config = dict(current_app.config)
+    service_names = data["service_names"]
+
+    def generate():
+        from app.services.sophos_client import remove_object
+
+        total = len(service_names)
+        deleted = 0
+        failed_count = 0
+
+        yield _sse_event({"type": "phase", "phase": "preparing",
+                          "message": "Preparing service rollback..."})
+
+        for i, name in enumerate(service_names):
+            yield _sse_event({"type": "progress", "index": i, "total": total,
+                              "item_name": name, "status": "deleting"})
+
+            success, error = remove_object(app_config, "Service", name)
+
+            if success:
+                deleted += 1
+                # Clean up sophos_objects tracking row
+                conn = get_db(db_path)
+                conn.execute(
+                    "DELETE FROM sophos_objects WHERE sophos_name = ? AND sophos_type = 'Service'",
+                    (name,))
+                conn.commit()
+                conn.close()
+                cache_invalidate("existing_services_with_details", "existing_object_names")
+                log_activity(db_path, "rollback", "services", name, result="success")
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_name": name, "status": "deleted", "success": True})
+            else:
+                failed_count += 1
+                log_activity(db_path, "rollback", "services", name,
+                             result="fail", error_message=error)
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_name": name, "status": "failed", "success": False,
+                                  "error": error})
+
+        yield _sse_event({"type": "done", "total": total,
+                          "deleted": deleted, "failed": failed_count})
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@migrate_bp.route("/migrate/hosts/rollback", methods=["POST"])
+def rollback_hosts():
+    """SSE: Rollback (delete) selected IP host objects from Sophos."""
+    data = request.get_json()
+    if not data or not data.get("host_names"):
+        return jsonify({"success": False, "message": "No hosts provided"}), 400
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    app_config = dict(current_app.config)
+    host_names = data["host_names"]
+
+    def generate():
+        from app.services.sophos_client import remove_object
+
+        total = len(host_names)
+        deleted = 0
+        failed_count = 0
+
+        yield _sse_event({"type": "phase", "phase": "preparing",
+                          "message": "Preparing host rollback..."})
+
+        for i, name in enumerate(host_names):
+            yield _sse_event({"type": "progress", "index": i, "total": total,
+                              "item_name": name, "status": "deleting"})
+
+            success, error = remove_object(app_config, "IPHost", name)
+
+            if success:
+                deleted += 1
+                conn = get_db(db_path)
+                conn.execute(
+                    "DELETE FROM sophos_objects WHERE sophos_name = ? AND sophos_type = 'IPHost'",
+                    (name,))
+                conn.commit()
+                conn.close()
+                cache_invalidate("existing_object_names")
+                log_activity(db_path, "rollback", "hosts", name, result="success")
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_name": name, "status": "deleted", "success": True})
+            else:
+                failed_count += 1
+                log_activity(db_path, "rollback", "hosts", name,
+                             result="fail", error_message=error)
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_name": name, "status": "failed", "success": False,
+                                  "error": error})
+
+        yield _sse_event({"type": "done", "total": total,
+                          "deleted": deleted, "failed": failed_count})
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # --- Firewall Rules Migration ---

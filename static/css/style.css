@@ -1603,3 +1603,36 @@ a:hover {
     height: 1rem;
     cursor: pointer;
 }
+
+/* NAT hosts section on Aliases page */
+.nat-hosts-section {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid var(--color-border);
+}
+
+.nat-hosts-section h3 {
+    margin-bottom: 0.5rem;
+}
+
+.nat-hosts-count {
+    color: var(--color-text-muted);
+    font-weight: normal;
+    font-size: 0.9rem;
+}
+
+/* Used-by cell in services table */
+.used-by-cell {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+/* Service status badge - exists */
+.status-badge.exists {
+    background: var(--color-info, #3498db);
+    color: white;
+}

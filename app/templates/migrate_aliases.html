@@ -13,6 +13,7 @@
     <a href="{{ url_for('migrate.migrate_aliases') }}" class="active">Aliases</a>
     <a href="{{ url_for('migrate.migrate_firewall_rules') }}">Firewall Rules</a>
     <a href="{{ url_for('migrate.migrate_nat_rules') }}">NAT Rules</a>
+    <a href="{{ url_for('migrate.migrate_services') }}">Services</a>
     <a href="{{ url_for('migrate.migrate_virtual_ips') }}">Virtual IPs</a>
 </div>
 
@@ -124,6 +125,41 @@
         </tbody>
     </table>
 </div>
+
+{% if nat_hosts %}
+<!-- Auto-created NAT hosts section -->
+<div class="nat-hosts-section">
+    <h3>Auto-created NAT Hosts <span class="nat-hosts-count">({{ nat_hosts|length }})</span></h3>
+    <p class="page-description">IP Host objects created during NAT rule migration. These can be rolled back individually.</p>
+    <table class="detail-table">
+        <thead>
+            <tr>
+                <th class="col-checkbox"><input type="checkbox" id="nat-host-select-all"></th>
+                <th>Status</th>
+                <th>Host Name</th>
+                <th>Type</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for host in nat_hosts %}
+            <tr class="nat-host-row" data-name="{{ host.sophos_name }}" data-id="{{ host.id }}">
+                <td class="col-checkbox">
+                    <input type="checkbox" class="nat-host-checkbox" value="{{ host.sophos_name }}">
+                </td>
+                <td><span class="status-badge migrated">migrated</span></td>
+                <td>{{ host.sophos_name }}</td>
+                <td>{{ host.sophos_type }}</td>
+                <td>{{ host.created_at[:16] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <div class="migrate-controls" style="margin-top: 0.5rem;">
+        <button class="btn btn-danger" id="btn-rollback-nat-hosts" {% if not configured %}disabled{% endif %}>Rollback Selected Hosts</button>
+    </div>
+</div>
+{% endif %}
 
 <!-- Confirmation modal -->
 <div id="migrate-modal" class="modal" style="display:none">

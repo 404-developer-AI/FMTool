@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+
+{% block title %}FMTool — Migrate Services{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+    <a href="{{ url_for('main.index') }}">Dashboard</a>
+    <span class="breadcrumb-sep">/</span>
+    <span>Migrate Services</span>
+</nav>
+
+<div class="migrate-subnav">
+    <a href="{{ url_for('migrate.migrate_aliases') }}">Aliases</a>
+    <a href="{{ url_for('migrate.migrate_firewall_rules') }}">Firewall Rules</a>
+    <a href="{{ url_for('migrate.migrate_nat_rules') }}">NAT Rules</a>
+    <a href="{{ url_for('migrate.migrate_services') }}" class="active">Services</a>
+    <a href="{{ url_for('migrate.migrate_virtual_ips') }}">Virtual IPs</a>
+</div>
+
+<div class="page-header">
+    <h1>Migrate Services</h1>
+    <p class="page-description">
+        Services required by firewall and NAT rules. Analyze rules to find missing services, create them on Sophos, or rollback created services.
+    </p>
+</div>
+
+<div class="migrate-controls">
+    <input type="text" id="search-input" class="search-input" placeholder="Search services...">
+    <select id="status-filter" class="filter-select">
+        <option value="">All statuses</option>
+        <option value="pending">Pending</option>
+        <option value="migrated">Migrated</option>
+        <option value="exists">Exists on Sophos</option>
+    </select>
+    <span class="match-count">Showing <span id="visible-count">0</span> of <span id="total-count">0</span></span>
+</div>
+
+<div class="migrate-controls">
+    <button class="btn btn-secondary" id="btn-analyze" {% if not configured %}disabled{% endif %}>Analyze Rules</button>
+    <label class="checkbox-inline"><input type="checkbox" id="select-all" disabled> Select All</label>
+    <button class="btn btn-success" id="btn-create" {% if not configured %}disabled{% endif %} disabled>Create Selected</button>
+    <button class="btn btn-danger" id="btn-rollback" {% if not configured %}disabled{% endif %} disabled>Rollback Selected</button>
+</div>
+
+<div id="services-panel">
+    <div class="no-data" id="empty-state">
+        <p>Click "Analyze Rules" to scan firewall and NAT rules for required services.</p>
+    </div>
+    <table class="detail-table" id="services-table" style="display:none">
+        <thead>
+            <tr>
+                <th class="col-checkbox"><input type="checkbox" id="header-select-all" disabled></th>
+                <th>Status</th>
+                <th>Service Name</th>
+                <th>Protocol</th>
+                <th>Port</th>
+                <th>Used By</th>
+            </tr>
+        </thead>
+        <tbody id="services-tbody">
+        </tbody>
+    </table>
+</div>
+
+<!-- Progress panel -->
+<div id="progress-panel" class="progress-panel" style="display:none">
+    <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <span class="progress-info" id="progress-info">Processing...</span>
+</div>
+
+<!-- Rollback confirmation modal -->
+<div id="rollback-modal" class="modal" style="display:none">
+    <div class="modal-content">
+        <h3>Confirm Service Rollback</h3>
+        <p>The following services will be deleted from Sophos:</p>
+        <div id="rollback-preview" class="rollback-preview"></div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" id="rollback-cancel">Cancel</button>
+            <button class="btn btn-danger" id="rollback-confirm">Delete from Sophos</button>
+        </div>
+    </div>
+</div>
+
+<div id="log-modal" class="modal" style="display:none">
+    <div class="modal-content modal-content-wide">
+        <h3>Activity Log: <span id="log-modal-name"></span></h3>
+        <div id="log-modal-body" class="log-modal-scroll"></div>
+        <div class="modal-actions">
+            <a id="log-modal-fulllink" href="/activity-log" class="btn btn-secondary">Full Activity Log</a>
+            <button id="log-modal-close" class="btn">Close</button>
+        </div>
+    </div>
+</div>
+
+<script>window.SOPHOS_CONFIGURED = {{ 'true' if configured else 'false' }};</script>
+<script src="{{ url_for('static', filename='js/migrate_services.js') }}"></script>
+{% endblock %}
