@@ -1,9 +1,13 @@
 """SQLite database schema and operations for FMTool."""
 
 import glob as globmod
+import json
+import logging
 import os
 import sqlite3
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 
 def get_db(db_path):
@@ -463,10 +467,107 @@ def init_db(db_path):
         CREATE INDEX IF NOT EXISTS idx_activity_log_timestamp ON activity_log(timestamp);
         CREATE INDEX IF NOT EXISTS idx_activity_log_category ON activity_log(category);
         CREATE INDEX IF NOT EXISTS idx_activity_log_item_name ON activity_log(item_name);
+
+        CREATE TABLE IF NOT EXISTS sophos_objects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_table TEXT NOT NULL,
+            source_id INTEGER NOT NULL,
+            sophos_name TEXT NOT NULL,
+            sophos_type TEXT NOT NULL,
+            is_member INTEGER DEFAULT 0,
+            parent_sophos_id INTEGER,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (parent_sophos_id) REFERENCES sophos_objects(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sophos_objects_source ON sophos_objects(source_table, source_id);
+        CREATE INDEX IF NOT EXISTS idx_sophos_objects_parent ON sophos_objects(parent_sophos_id);
     """)
 
     conn.commit()
     conn.close()
+
+    backfill_sophos_objects(db_path)
+
+
+def backfill_sophos_objects(db_path):
+    """Backfill sophos_objects from activity_log for pre-v0.8b migrations.
+
+    Only runs when sophos_objects is empty but successful migrations exist in the log.
+    Backfilled entries lack parent/child relationships and precise type info for aliases.
+    """
+    conn = get_db(db_path)
+
+    count = conn.execute("SELECT COUNT(*) FROM sophos_objects").fetchone()[0]
+    if count > 0:
+        conn.close()
+        return
+
+    rows = conn.execute(
+        "SELECT category, item_id, item_name, details FROM activity_log "
+        "WHERE action_type = 'migrate' AND result = 'success' AND details IS NOT NULL"
+    ).fetchall()
+
+    if not rows:
+        conn.close()
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+
+    for row in rows:
+        try:
+            details = json.loads(row["details"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        category = row["category"]
+        item_id = row["item_id"]
+
+        if category == "aliases":
+            objects_created = details.get("objects_created", [])
+            for name in objects_created:
+                # Best-effort type inference for backfill
+                if name.startswith("pf_svc_") or name.startswith("pf_range_"):
+                    sophos_type = "Service"
+                elif name.endswith("_group"):
+                    sophos_type = "ServiceGroup"
+                else:
+                    sophos_type = "IPHost"
+                conn.execute(
+                    "INSERT INTO sophos_objects (source_table, source_id, sophos_name, "
+                    "sophos_type, is_member, parent_sophos_id, created_at) "
+                    "VALUES (?, ?, ?, ?, 0, NULL, ?)",
+                    ("aliases", item_id, name, sophos_type, now),
+                )
+                inserted += 1
+
+        elif category == "firewall_rules":
+            rule_name = details.get("rule_name")
+            if rule_name:
+                conn.execute(
+                    "INSERT INTO sophos_objects (source_table, source_id, sophos_name, "
+                    "sophos_type, is_member, parent_sophos_id, created_at) "
+                    "VALUES (?, ?, ?, 'FirewallRule', 0, NULL, ?)",
+                    ("firewall_rules", item_id, rule_name, now),
+                )
+                inserted += 1
+
+        elif category == "nat_rules":
+            rule_name = details.get("rule_name")
+            if rule_name:
+                conn.execute(
+                    "INSERT INTO sophos_objects (source_table, source_id, sophos_name, "
+                    "sophos_type, is_member, parent_sophos_id, created_at) "
+                    "VALUES (?, ?, ?, 'NATRule', 0, NULL, ?)",
+                    ("nat_rules", item_id, rule_name, now),
+                )
+                inserted += 1
+
+    conn.commit()
+    conn.close()
+
+    if inserted:
+        logger.info("Backfilled %d sophos_objects from activity_log", inserted)
 
 
 # All data tables that hold imported config items
@@ -1155,6 +1256,93 @@ def delete_network_alias_mapping(db_path, mapping_id):
     return deleted
 
 
+# --- Sophos object tracking (rollback support) ---
+
+
+def insert_sophos_object(db_path, source_table, source_id, sophos_name,
+                         sophos_type, is_member=False, parent_sophos_id=None):
+    """Insert a tracked Sophos object. Returns the inserted row ID."""
+    conn = get_db(db_path)
+    cur = conn.execute(
+        "INSERT INTO sophos_objects (source_table, source_id, sophos_name, "
+        "sophos_type, is_member, parent_sophos_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (source_table, source_id, sophos_name, sophos_type,
+         1 if is_member else 0, parent_sophos_id,
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return row_id
+
+
+def insert_sophos_objects_bulk(db_path, objects_list):
+    """Bulk insert tracked Sophos objects.
+
+    Each item in objects_list is a dict with keys:
+        source_table, source_id, sophos_name, sophos_type,
+        is_member (bool), parent_sophos_id (int or None)
+
+    Returns list of inserted row IDs.
+    """
+    conn = get_db(db_path)
+    now = datetime.now(timezone.utc).isoformat()
+    ids = []
+    for obj in objects_list:
+        cur = conn.execute(
+            "INSERT INTO sophos_objects (source_table, source_id, sophos_name, "
+            "sophos_type, is_member, parent_sophos_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (obj["source_table"], obj["source_id"], obj["sophos_name"],
+             obj["sophos_type"], 1 if obj.get("is_member") else 0,
+             obj.get("parent_sophos_id"), now),
+        )
+        ids.append(cur.lastrowid)
+    conn.commit()
+    conn.close()
+    return ids
+
+
+def get_sophos_objects_for_items(db_path, source_table, source_ids):
+    """Get tracked Sophos objects grouped by source_id.
+
+    Returns dict: {source_id: [dict, ...]}
+    """
+    if not source_ids:
+        return {}
+    conn = get_db(db_path)
+    placeholders = ",".join("?" * len(source_ids))
+    rows = conn.execute(
+        f"SELECT * FROM sophos_objects WHERE source_table = ? "
+        f"AND source_id IN ({placeholders}) ORDER BY id",
+        [source_table] + list(source_ids),
+    ).fetchall()
+    conn.close()
+
+    result = {}
+    for row in rows:
+        d = dict(row)
+        result.setdefault(d["source_id"], []).append(d)
+    return result
+
+
+def delete_sophos_object_rows(db_path, sophos_object_ids):
+    """Delete tracking rows from sophos_objects by their IDs."""
+    if not sophos_object_ids:
+        return 0
+    conn = get_db(db_path)
+    placeholders = ",".join("?" * len(sophos_object_ids))
+    cur = conn.execute(
+        f"DELETE FROM sophos_objects WHERE id IN ({placeholders})",
+        list(sophos_object_ids),
+    )
+    conn.commit()
+    deleted = cur.rowcount
+    conn.close()
+    return deleted
+
+
 def cleanup_all(db_path, upload_folder):
     """Delete all imported data, imports log, and uploaded files."""
     conn = get_db(db_path)
@@ -1163,6 +1351,7 @@ def cleanup_all(db_path, upload_folder):
     for table in DATA_TABLES:
         cur.execute(f"DELETE FROM {table}")
     cur.execute("DELETE FROM activity_log")
+    cur.execute("DELETE FROM sophos_objects")
     cur.execute("DELETE FROM imports")
 
     conn.commit()

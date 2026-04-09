@@ -4,10 +4,12 @@ import json
 
 from flask import Blueprint, Response, current_app, jsonify, render_template, request
 from app.models.database import (
-    get_table_items, get_aliases_by_ids, get_firewall_rules_by_ids,
+    get_db, get_table_items, get_aliases_by_ids, get_firewall_rules_by_ids,
     get_nat_rules_by_ids, get_nat_destination_lookup, update_migration_status,
     get_zone_mappings, save_zone_mapping, delete_zone_mapping,
     get_network_alias_mappings, save_network_alias_mapping, delete_network_alias_mapping,
+    insert_sophos_object, insert_sophos_objects_bulk,
+    get_sophos_objects_for_items, delete_sophos_object_rows,
 )
 from app.services.sophos_client import (
     is_configured, get_client, get_existing_object_names,
@@ -27,8 +29,27 @@ from app.services.migration_engine import (
     sanitize_sophos_name,
 )
 from app.services.activity_logger import log_activity
+from app.services.rollback_engine import (
+    plan_rollback, plan_to_dict as rollback_plan_to_dict, execute_rollback,
+)
 
 migrate_bp = Blueprint("migrate", __name__)
+
+# Map migration_engine sophos_type strings to SDK xml_tag names for sophos_objects tracking
+SOPHOS_TYPE_MAP = {
+    "ip_host": "IPHost",
+    "ip_host_group": "IPHostGroup",
+    "fqdn_host": "FQDNHost",
+    "service": "Service",
+    "service_group": "ServiceGroup",
+}
+
+# Map URL category slugs to database table names
+CATEGORY_TABLE_MAP = {
+    "aliases": "aliases",
+    "firewall-rules": "firewall_rules",
+    "nat-rules": "nat_rules",
+}
 
 
 def _sse_event(data):
@@ -198,6 +219,9 @@ def execute_aliases():
                 if result.success:
                     migrated += 1
                     cache_invalidate("existing_object_names")
+                    # Track created Sophos objects for rollback
+                    if plan.action == "create" and plan.objects:
+                        _track_alias_objects(db_path, alias["id"], plan)
                 else:
                     failed += 1
 
@@ -213,6 +237,37 @@ def execute_aliases():
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _track_alias_objects(db_path, alias_id, plan):
+    """Track Sophos objects created during alias migration for rollback."""
+    # Insert member objects first
+    member_ids = {}
+    parent_id = None
+
+    for obj in plan.objects:
+        sophos_type = SOPHOS_TYPE_MAP.get(obj.sophos_type, obj.sophos_type)
+        if obj.is_member:
+            row_id = insert_sophos_object(
+                db_path, "aliases", alias_id, obj.sophos_name,
+                sophos_type, is_member=True)
+            member_ids[obj.sophos_name] = row_id
+        else:
+            # This is the parent (group or standalone object)
+            parent_id = insert_sophos_object(
+                db_path, "aliases", alias_id, obj.sophos_name,
+                sophos_type, is_member=False)
+
+    # Link members to parent if both exist
+    if parent_id and member_ids:
+        conn = get_db(db_path)
+        placeholders = ",".join("?" * len(member_ids))
+        conn.execute(
+            f"UPDATE sophos_objects SET parent_sophos_id = ? WHERE id IN ({placeholders})",
+            [parent_id] + list(member_ids.values()),
+        )
+        conn.commit()
+        conn.close()
 
 
 @migrate_bp.route("/migrate/aliases/skip", methods=["POST"])
@@ -474,6 +529,9 @@ def execute_firewall_rules():
                     cache_invalidate("existing_fw_rule_names")
                     if plan.action == "create":
                         prev_name = plan.rule_name
+                        insert_sophos_object(
+                            db_path, "firewall_rules", rule["id"],
+                            result.rule_name, "FirewallRule")
                 else:
                     failed += 1
 
@@ -647,6 +705,11 @@ def create_missing_services():
                 created += 1
                 cache_invalidate("existing_services_with_details", "existing_object_names")
                 log_activity(db_path, "create_service", "services", name, result="success")
+                # Track for rollback — linked to the rule if provided
+                rule_id = svc.get("rule_id", 0)
+                insert_sophos_object(
+                    db_path, "firewall_rules", rule_id,
+                    name, "Service", is_member=True)
                 yield _sse_event({"type": "progress", "index": i, "total": total,
                                   "item_name": name, "status": "created", "success": True})
             except Exception as e:
@@ -876,6 +939,9 @@ def execute_nat_rules():
                     cache_invalidate("existing_nat_rule_names")
                     if plan.action == "create":
                         prev_name = plan.rule_name
+                        insert_sophos_object(
+                            db_path, "nat_rules", rule["id"],
+                            result.rule_name, "NATRule")
                 else:
                     failed += 1
 
@@ -988,6 +1054,10 @@ def create_nat_missing_services():
                 created += 1
                 cache_invalidate("existing_services_with_details", "existing_object_names")
                 log_activity(db_path, "create_service", "services", name, result="success")
+                rule_id = svc.get("rule_id", 0)
+                insert_sophos_object(
+                    db_path, "nat_rules", rule_id,
+                    name, "Service", is_member=True)
                 yield _sse_event({"type": "progress", "index": i, "total": total,
                                   "item_name": name, "status": "created", "success": True})
             except Exception as e:
@@ -1055,6 +1125,10 @@ def create_nat_missing_hosts():
                 cache_invalidate("existing_object_names")
                 log_activity(db_path, "create_host", "hosts", name,
                              details={"ip": ip}, result="success")
+                rule_id = host.get("rule_id", 0)
+                insert_sophos_object(
+                    db_path, "nat_rules", rule_id,
+                    name, "IPHost", is_member=True)
                 yield _sse_event({"type": "progress", "index": i, "total": total,
                                   "item_name": name, "status": "created", "success": True})
             except Exception as e:
@@ -1082,3 +1156,153 @@ def fetch_nat_sophos_interfaces():
         return jsonify({"success": True, "interfaces": interfaces})
     except Exception as e:
         return jsonify({"success": False, "message": f"Failed to fetch interfaces: {e}"}), 500
+
+
+# --- Rollback routes (generic for all categories) ---
+
+
+def _get_item_names(db_path, source_table, item_ids):
+    """Get display names for items by category."""
+    if source_table == "aliases":
+        items = get_aliases_by_ids(db_path, item_ids)
+        return {item["id"]: item["name"] for item in items}
+    elif source_table == "firewall_rules":
+        items = get_firewall_rules_by_ids(db_path, item_ids)
+        return {item["id"]: item.get("descr") or f"rule_{item['id']}" for item in items}
+    elif source_table == "nat_rules":
+        items = get_nat_rules_by_ids(db_path, item_ids)
+        return {item["id"]: item.get("descr") or f"nat_{item['id']}" for item in items}
+    return {}
+
+
+@migrate_bp.route("/migrate/<category>/rollback/plan", methods=["POST"])
+def rollback_plan_route(category):
+    """AJAX: Preview what will be deleted during rollback."""
+    source_table = CATEGORY_TABLE_MAP.get(category)
+    if not source_table:
+        return jsonify({"success": False, "message": f"Invalid category: {category}"}), 400
+
+    data = request.get_json()
+    if not data or "item_ids" not in data:
+        return jsonify({"success": False, "message": "No item IDs provided"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    item_ids = data["item_ids"]
+    cascade = data.get("cascade", False)
+
+    item_names = _get_item_names(db_path, source_table, item_ids)
+    plans = plan_rollback(db_path, source_table, item_ids, item_names, cascade=cascade)
+
+    return jsonify({
+        "success": True,
+        "plans": [rollback_plan_to_dict(p) for p in plans],
+    })
+
+
+@migrate_bp.route("/migrate/<category>/rollback/execute", methods=["POST"])
+def rollback_execute_route(category):
+    """SSE: Execute rollback — delete Sophos objects and reset status to pending."""
+    source_table = CATEGORY_TABLE_MAP.get(category)
+    if not source_table:
+        return jsonify({"success": False, "message": f"Invalid category: {category}"}), 400
+
+    data = request.get_json()
+    if not data or "item_ids" not in data:
+        return jsonify({"success": False, "message": "No item IDs provided"}), 400
+
+    if not is_configured(current_app.config):
+        return jsonify({"success": False, "message": "Sophos API not configured"}), 400
+
+    db_path = current_app.config["DATABASE_PATH"]
+    app_config = dict(current_app.config)
+    item_ids = data["item_ids"]
+    cascade = data.get("cascade", False)
+
+    item_names = _get_item_names(db_path, source_table, item_ids)
+    plans = plan_rollback(db_path, source_table, item_ids, item_names, cascade=cascade)
+
+    def generate():
+        try:
+            yield _sse_event({"type": "phase", "phase": "preparing",
+                              "message": "Preparing rollback..."})
+
+            total = len(plans)
+            deleted_count = 0
+            failed_count = 0
+
+            for i, plan in enumerate(plans):
+                item_name = plan.item_name
+                source_id = plan.source_id
+
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_id": source_id, "item_name": item_name,
+                                  "status": "deleting"})
+
+                if not plan.primary_objects and not (cascade and plan.member_objects):
+                    # Nothing to delete
+                    failed_count += 1
+                    warning = plan.warnings[0] if plan.warnings else "No objects to delete"
+                    log_activity(db_path, "rollback", source_table, item_name, source_id,
+                                 json.dumps({"warnings": plan.warnings}),
+                                 "fail", warning)
+                    yield _sse_event({"type": "progress", "index": i, "total": total,
+                                      "item_id": source_id, "item_name": item_name,
+                                      "status": "failed", "success": False,
+                                      "error": warning})
+                    continue
+
+                # Execute deletion
+                obj_deleted = []
+                obj_failed = []
+
+                for sophos_name, sophos_type, success, error in execute_rollback(
+                        app_config, plan, db_path, cascade=cascade):
+                    if success:
+                        obj_deleted.append(sophos_name)
+                    else:
+                        obj_failed.append({"name": sophos_name, "error": error})
+
+                # Determine overall success: at least primary objects deleted
+                primary_names = {o["sophos_name"] for o in plan.primary_objects}
+                primary_deleted = primary_names.issubset(set(obj_deleted))
+
+                if primary_deleted:
+                    update_migration_status(db_path, source_table, [source_id], "pending")
+                    deleted_count += 1
+                    status = "deleted"
+                else:
+                    failed_count += 1
+                    status = "failed"
+
+                log_activity(
+                    db_path, "rollback", source_table, item_name, source_id,
+                    json.dumps({"objects_deleted": obj_deleted,
+                                "objects_failed": obj_failed,
+                                "cascade": cascade}),
+                    "success" if primary_deleted else "fail",
+                    obj_failed[0]["error"] if obj_failed else None,
+                )
+
+                yield _sse_event({"type": "progress", "index": i, "total": total,
+                                  "item_id": source_id, "item_name": item_name,
+                                  "status": status,
+                                  "success": primary_deleted,
+                                  "objects_deleted": obj_deleted,
+                                  "objects_failed": obj_failed,
+                                  "error": obj_failed[0]["error"] if obj_failed and not primary_deleted else None})
+
+            # Invalidate relevant caches
+            if source_table == "aliases":
+                cache_invalidate("existing_object_names")
+            elif source_table == "firewall_rules":
+                cache_invalidate("existing_fw_rule_names")
+            elif source_table == "nat_rules":
+                cache_invalidate("existing_nat_rule_names")
+
+            yield _sse_event({"type": "done", "total": total,
+                              "deleted": deleted_count, "failed": failed_count})
+        except Exception as e:
+            yield _sse_event({"type": "error", "message": str(e)})
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

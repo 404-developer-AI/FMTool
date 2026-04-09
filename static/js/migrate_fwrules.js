@@ -915,6 +915,166 @@
         return div.innerHTML;
     }
 
+    // --- Rollback ---
+    const btnRollback = document.getElementById('btn-rollback');
+    const rollbackModal = document.getElementById('rollback-modal');
+    const rollbackPreview = document.getElementById('rollback-preview');
+    const rollbackCascade = document.getElementById('rollback-cascade');
+    const rollbackCancel = document.getElementById('rollback-cancel');
+    const rollbackConfirm = document.getElementById('rollback-confirm');
+    let rollbackItemIds = [];
+
+    function getSelectedMigratedIds() {
+        return Array.from(document.querySelectorAll('.rule-checkbox:checked'))
+            .filter(cb => {
+                const row = cb.closest('.migrate-row');
+                return row && row.dataset.status === 'migrated';
+            })
+            .map(cb => parseInt(cb.value));
+    }
+
+    async function fetchRollbackPlan(ids, cascade) {
+        const resp = await fetch('/migrate/firewall-rules/rollback/plan', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_ids: ids, cascade: cascade}),
+        });
+        return await resp.json();
+    }
+
+    function renderRollbackPreview(plans) {
+        let html = '';
+        for (const plan of plans) {
+            html += `<div class="rollback-item">`;
+            html += `<strong>${escapeHtml(plan.item_name)}</strong>`;
+            if (plan.primary_objects.length === 0 && plan.member_objects.length === 0) {
+                html += `<div class="rollback-warning">No tracked objects</div>`;
+            } else {
+                html += '<ul>';
+                for (const obj of plan.primary_objects) {
+                    html += `<li>${escapeHtml(obj.sophos_name)} <span class="rollback-type">(${obj.sophos_type})</span></li>`;
+                }
+                for (const obj of plan.member_objects) {
+                    html += `<li class="rollback-member">${escapeHtml(obj.sophos_name)} <span class="rollback-type">(${obj.sophos_type})</span></li>`;
+                }
+                html += '</ul>';
+            }
+            for (const w of plan.warnings) {
+                html += `<div class="rollback-warning">${escapeHtml(w)}</div>`;
+            }
+            html += '</div>';
+        }
+        rollbackPreview.innerHTML = html;
+    }
+
+    if (btnRollback) {
+        btnRollback.addEventListener('click', async function() {
+            rollbackItemIds = getSelectedMigratedIds();
+            if (rollbackItemIds.length === 0) {
+                showToast('Select at least one migrated rule', 'warning');
+                return;
+            }
+            rollbackCascade.checked = false;
+            rollbackPreview.innerHTML = '<p>Loading preview...</p>';
+            rollbackModal.style.display = 'flex';
+
+            try {
+                const data = await fetchRollbackPlan(rollbackItemIds, false);
+                if (data.success) {
+                    renderRollbackPreview(data.plans);
+                } else {
+                    rollbackPreview.innerHTML = `<p class="error">${escapeHtml(data.message)}</p>`;
+                }
+            } catch (e) {
+                rollbackPreview.innerHTML = '<p class="error">Failed to load preview</p>';
+            }
+        });
+
+        rollbackCascade.addEventListener('change', async function() {
+            rollbackPreview.innerHTML = '<p>Loading preview...</p>';
+            try {
+                const data = await fetchRollbackPlan(rollbackItemIds, rollbackCascade.checked);
+                if (data.success) renderRollbackPreview(data.plans);
+            } catch (e) {
+                rollbackPreview.innerHTML = '<p class="error">Failed to load preview</p>';
+            }
+        });
+
+        rollbackCancel.addEventListener('click', function() {
+            rollbackModal.style.display = 'none';
+        });
+
+        rollbackConfirm.addEventListener('click', async function() {
+            rollbackModal.style.display = 'none';
+            await executeRollback(rollbackItemIds, rollbackCascade.checked);
+        });
+    }
+
+    async function executeRollback(ids, cascade) {
+        btnRollback.disabled = true;
+        btnMigrate.disabled = true;
+        btnDryrun.disabled = true;
+        progressPanel.style.display = 'block';
+        dryrunPanel.style.display = 'none';
+        progressBar.style.width = '0%';
+        progressInfo.textContent = 'Preparing rollback...';
+
+        try {
+            const resp = await fetch('/migrate/firewall-rules/rollback/execute', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({item_ids: ids, cascade: cascade}),
+            });
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, {stream: true});
+
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const event = JSON.parse(line.slice(6));
+
+                    if (event.type === 'phase') {
+                        progressInfo.textContent = event.message;
+                    } else if (event.type === 'progress' && event.success !== undefined) {
+                        const pct = ((event.index + 1) / event.total) * 100;
+                        progressBar.style.width = pct + '%';
+                        progressInfo.textContent = `Rolling back ${event.index + 1} of ${event.total}...`;
+                        if (event.success) {
+                            updateRowStatus(event.item_id, 'pending');
+                        }
+                    } else if (event.type === 'done') {
+                        progressBar.style.width = '100%';
+                        progressInfo.textContent = `Done: ${event.deleted} rolled back, ${event.failed} failed`;
+                        if (event.failed > 0) {
+                            showToast(`Rollback completed with ${event.failed} error(s)`, 'warning');
+                        } else {
+                            showToast(`Successfully rolled back ${event.deleted} rule(s)`, 'success');
+                        }
+                    } else if (event.type === 'error') {
+                        showToast(event.message || 'Rollback failed', 'error');
+                        progressInfo.textContent = 'Rollback failed';
+                    }
+                }
+            }
+        } catch (e) {
+            showToast('Network error during rollback', 'error');
+            progressInfo.textContent = 'Network error';
+        }
+
+        btnRollback.disabled = false;
+        btnMigrate.disabled = false;
+        btnDryrun.disabled = false;
+    }
+
     // --- Sophos sync: duplicate check with caching ---
     const SYNC_CACHE_KEY = 'fmtool_sophos_fwrule_sync';
     const SYNC_MAX_AGE_MS = 60 * 60 * 1000;

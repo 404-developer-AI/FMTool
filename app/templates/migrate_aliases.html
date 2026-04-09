@@ -61,6 +61,7 @@
     <button class="btn btn-secondary" id="btn-dryrun" {% if not configured %}disabled{% endif %}>Dry Run</button>
     <button class="btn btn-success" id="btn-migrate" {% if not configured %}disabled{% endif %}>Migrate Selected</button>
     <button class="btn btn-warning" id="btn-skip">Skip Selected</button>
+    <button class="btn btn-danger" id="btn-rollback" {% if not configured %}disabled{% endif %}>Rollback Selected</button>
 </div>
 
 <div id="dryrun-panel" class="dryrun-panel" style="display:none">
@@ -133,6 +134,23 @@
         <div class="modal-actions">
             <button class="btn btn-secondary" id="modal-cancel">Cancel</button>
             <button class="btn btn-success" id="modal-confirm">Migrate</button>
+        </div>
+    </div>
+</div>
+
+<!-- Rollback confirmation modal -->
+<div id="rollback-modal" class="modal" style="display:none">
+    <div class="modal-content">
+        <h3>Confirm Rollback</h3>
+        <p id="rollback-message">The following Sophos objects will be deleted:</p>
+        <div id="rollback-preview" class="rollback-preview"></div>
+        <label class="cascade-option">
+            <input type="checkbox" id="rollback-cascade">
+            Also delete dependent objects (member hosts, services)
+        </label>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" id="rollback-cancel">Cancel</button>
+            <button class="btn btn-danger" id="rollback-confirm">Delete from Sophos</button>
         </div>
     </div>
 </div>

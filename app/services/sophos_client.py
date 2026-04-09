@@ -520,6 +520,34 @@ def _count_items(result):
     return 0
 
 
+def remove_object(app_config, xml_tag, name):
+    """Delete a Sophos object by xml_tag and name.
+
+    Returns:
+        (True, None) on success or if object not found (already deleted).
+        (False, error_msg) on failure.
+    """
+    try:
+        client = get_client(app_config)
+        _retry_on_rate_limit(client.remove, xml_tag, name)
+        cache_invalidate("existing_object_names", "existing_fw_rule_names",
+                         "existing_nat_rule_names", "existing_services_with_details")
+        return True, None
+    except SophosFirewallZeroRecords:
+        # Object doesn't exist on Sophos — treat as successful deletion
+        return True, None
+    except SophosFirewallAPIError as e:
+        error_str = str(e)
+        # "No matching record" also means already deleted
+        if "no matching" in error_str.lower() or "does not exist" in error_str.lower():
+            return True, None
+        return False, error_str
+    except (SophosConnectionError, SophosAuthError) as e:
+        return False, str(e)
+    except Exception as e:
+        return False, str(e)
+
+
 def _extract_nested(data, key):
     """Recursively search for a key in nested dict/list structure."""
     if isinstance(data, dict):
