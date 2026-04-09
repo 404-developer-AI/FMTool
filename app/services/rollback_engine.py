@@ -121,22 +121,31 @@ def execute_rollback(app_config, plan, db_path, cascade=False):
         (sophos_name, sophos_type, success, error_msg) for each deletion attempt
     """
     from app.services.sophos_client import remove_object
-    from app.models.database import delete_sophos_object_rows
+    from app.models.database import delete_sophos_object_rows, delete_sophos_object_by_name
 
     # Build ordered list: primary objects first, then members if cascade
+    # Deduplicate by (sophos_name, sophos_type) to avoid multiple delete attempts
     objects_to_delete = list(plan.primary_objects)
     if cascade:
         objects_to_delete.extend(plan.member_objects)
 
+    seen = set()
     for obj in objects_to_delete:
         sophos_name = obj["sophos_name"]
         sophos_type = obj["sophos_type"]
-        sophos_object_id = obj["sophos_object_id"]
+        key = (sophos_name, sophos_type)
+
+        if key in seen:
+            # Already attempted — clean up this duplicate tracking row silently
+            delete_sophos_object_rows(db_path, [obj["sophos_object_id"]])
+            continue
+        seen.add(key)
 
         success, error = remove_object(app_config, sophos_type, sophos_name)
 
         if success:
-            delete_sophos_object_rows(db_path, [sophos_object_id])
+            # Clean up ALL tracking rows for this object (shared across multiple rules)
+            delete_sophos_object_by_name(db_path, sophos_name, sophos_type)
             logger.info("Rolled back %s: %s", sophos_type, sophos_name)
         else:
             logger.warning("Failed to rollback %s '%s': %s",

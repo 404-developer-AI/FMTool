@@ -949,11 +949,12 @@ def create_missing_services():
                 created += 1
                 cache_invalidate("existing_services_with_details", "existing_object_names")
                 log_activity(db_path, "create_service", "services", name, result="success")
-                # Track for rollback — linked to the rule if provided
-                rule_id = svc.get("rule_id", 0)
-                insert_sophos_object(
-                    db_path, "firewall_rules", rule_id,
-                    name, "Service", is_member=True)
+                # Track for rollback — linked to all rules that use this service
+                rule_ids = svc.get("rule_ids") or ([svc["rule_id"]] if svc.get("rule_id") else [0])
+                for rid in rule_ids:
+                    insert_sophos_object(
+                        db_path, "firewall_rules", rid,
+                        name, "Service", is_member=True)
                 yield _sse_event({"type": "progress", "index": i, "total": total,
                                   "item_name": name, "status": "created", "success": True})
             except Exception as e:
@@ -1298,10 +1299,12 @@ def create_nat_missing_services():
                 created += 1
                 cache_invalidate("existing_services_with_details", "existing_object_names")
                 log_activity(db_path, "create_service", "services", name, result="success")
-                rule_id = svc.get("rule_id", 0)
-                insert_sophos_object(
-                    db_path, "nat_rules", rule_id,
-                    name, "Service", is_member=True)
+                # Track for rollback — linked to all rules that use this service
+                rule_ids = svc.get("rule_ids") or ([svc["rule_id"]] if svc.get("rule_id") else [0])
+                for rid in rule_ids:
+                    insert_sophos_object(
+                        db_path, "nat_rules", rid,
+                        name, "Service", is_member=True)
                 yield _sse_event({"type": "progress", "index": i, "total": total,
                                   "item_name": name, "status": "created", "success": True})
             except Exception as e:
@@ -1369,10 +1372,12 @@ def create_nat_missing_hosts():
                 cache_invalidate("existing_object_names")
                 log_activity(db_path, "create_host", "hosts", name,
                              details={"ip": ip}, result="success")
-                rule_id = host.get("rule_id", 0)
-                insert_sophos_object(
-                    db_path, "nat_rules", rule_id,
-                    name, "IPHost", is_member=True)
+                # Track for rollback — linked to all rules that use this host
+                rule_ids = host.get("rule_ids") or ([host["rule_id"]] if host.get("rule_id") else [0])
+                for rid in rule_ids:
+                    insert_sophos_object(
+                        db_path, "nat_rules", rid,
+                        name, "IPHost", is_member=True)
                 yield _sse_event({"type": "progress", "index": i, "total": total,
                                   "item_name": name, "status": "created", "success": True})
             except Exception as e:
@@ -1532,8 +1537,7 @@ def rollback_execute_route(category):
                                   "status": status,
                                   "success": primary_deleted,
                                   "objects_deleted": obj_deleted,
-                                  "objects_failed": obj_failed,
-                                  "error": obj_failed[0]["error"] if obj_failed and not primary_deleted else None})
+                                  "objects_failed": obj_failed})
 
             # Invalidate relevant caches
             if source_table == "aliases":

@@ -129,6 +129,7 @@
                 data-interface="{{ rule.interface or '' }}"
                 data-status="{{ rule.migration_status or 'pending' }}"
                 data-disabled="{{ rule.disabled or 0 }}"
+                data-name="{{ rule.descr or 'nat_' ~ rule.id }}"
                 data-search="{{ rule.migration_status or 'pending' }} {{ rule.interface or '' }} {{ rule.protocol or '' }} {{ rule.destination_value or '' }} {{ rule.destination_port or '' }} {{ rule.target or '' }} {{ rule.local_port or '' }} {{ rule.descr or '' }}">
                 <td class="col-checkbox">
                     <input type="checkbox" class="rule-checkbox" value="{{ rule.id }}">

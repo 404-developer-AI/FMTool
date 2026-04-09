@@ -195,19 +195,31 @@
         btnDryrun.textContent = 'Dry Run';
     });
 
+    function getDryrunSeverity(plan) {
+        if (plan.action === 'skip' || plan.action === 'manual') return 'red';
+        if (plan.warnings && plan.warnings.length > 0) return 'orange';
+        if (plan.action === 'exists') return 'green';
+        return 'green';
+    }
+
     function renderDryrunResults(plans) {
         let html = '';
         for (const plan of plans) {
             const actionClass = plan.action === 'create' ? 'dryrun-create' :
                                 plan.action === 'exists' ? 'dryrun-exists' :
                                 plan.action === 'skip' ? 'dryrun-skip' : 'dryrun-manual';
+            const severity = getDryrunSeverity(plan);
 
-            html += `<div class="dryrun-item ${actionClass}">`;
-            html += `<div class="dryrun-item-header">`;
+            html += `<div class="dryrun-item dryrun-collapsed dryrun-severity-${severity} ${actionClass}" data-alias-id="${plan.alias_id}">`;
+            html += `<div class="dryrun-item-header dryrun-toggle">`;
+            html += `<span class="dryrun-expand-icon">&#9654;</span>`;
             html += `<strong>${escapeHtml(plan.alias_name)}</strong>`;
             html += `<span class="dryrun-type">${escapeHtml(plan.alias_type)}</span>`;
             html += `<span class="dryrun-action">${escapeHtml(plan.action)}</span>`;
+            html += `<span class="dryrun-reason-short">${escapeHtml(plan.reason)}</span>`;
+            html += `<button class="btn btn-small btn-warning btn-dryrun-skip" data-id="${plan.alias_id}" title="Skip this alias">Skip</button>`;
             html += `</div>`;
+            html += `<div class="dryrun-details">`;
             html += `<div class="dryrun-reason">${escapeHtml(plan.reason)}</div>`;
 
             if (plan.objects.length > 0) {
@@ -231,10 +243,53 @@
                 html += '</div>';
             }
 
-            html += '</div>';
+            html += '</div></div>';
         }
         dryrunResults.innerHTML = html;
     }
+
+    // Delegated click handlers on dryrun-results (registered once)
+    dryrunResults.addEventListener('click', function(e) {
+        const toggle = e.target.closest('.dryrun-toggle');
+        if (toggle && !e.target.closest('.btn-dryrun-skip')) {
+            const item = toggle.closest('.dryrun-item');
+            if (item) item.classList.toggle('dryrun-collapsed');
+        }
+    });
+
+    // Skip button per item (registered once)
+    dryrunResults.addEventListener('click', async function(e) {
+        const btn = e.target.closest('.btn-dryrun-skip');
+        if (!btn) return;
+        e.stopPropagation();
+        const aliasId = parseInt(btn.dataset.id);
+        btn.disabled = true;
+        btn.textContent = 'Skipping...';
+
+        try {
+            const resp = await fetch('/migrate/aliases/skip', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({alias_ids: [aliasId]}),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                lastDryrunIds = lastDryrunIds.filter(id => id !== aliasId);
+                const item = btn.closest('.dryrun-item');
+                if (item) item.remove();
+                updateRowStatus(aliasId, 'skipped');
+                showToast('Alias skipped', 'success');
+            } else {
+                showToast(data.message || 'Skip failed', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Skip';
+            }
+        } catch (e) {
+            showToast('Network error', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Skip';
+        }
+    });
 
     btnDryrunClose.addEventListener('click', function() {
         dryrunPanel.style.display = 'none';
@@ -242,8 +297,10 @@
     });
 
     btnDryrunExecute.addEventListener('click', function() {
-        if (lastDryrunIds.length > 0) {
-            executeMigration(lastDryrunIds);
+        const currentIds = getSelectedIds();
+        const ids = currentIds.length > 0 ? currentIds : lastDryrunIds;
+        if (ids.length > 0) {
+            executeMigration(ids);
         }
     });
 
@@ -381,6 +438,14 @@
         // Uncheck after migration
         const cb = row.querySelector('.alias-checkbox');
         if (cb) cb.checked = false;
+        // Ensure log button is visible (activity exists after any status change)
+        if (!row.querySelector('.btn-log')) {
+            const logCell = row.cells[row.cells.length - 1];
+            if (logCell) {
+                const name = row.dataset.name || `alias_${aliasId}`;
+                logCell.innerHTML = `<button class="btn-log btn-sm" data-id="${aliasId}" data-name="${name}" data-category="aliases" title="View log">Log</button>`;
+            }
+        }
     }
 
     function escapeHtml(str) {
@@ -524,6 +589,11 @@
                         progressInfo.textContent = `Rolling back ${event.index + 1} of ${event.total}...`;
                         if (event.success) {
                             updateRowStatus(event.item_id, 'pending');
+                        }
+                        if (event.objects_failed && event.objects_failed.length > 0) {
+                            for (const f of event.objects_failed) {
+                                showToast(`${f.name}: ${f.error}`, 'warning', 8000);
+                            }
                         }
                     } else if (event.type === 'done') {
                         progressBar.style.width = '100%';

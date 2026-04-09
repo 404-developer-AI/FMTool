@@ -520,6 +520,22 @@ def _count_items(result):
     return 0
 
 
+def _verify_object_exists(client, xml_tag, name):
+    """Check if an object still exists on Sophos after a failed delete attempt.
+
+    Returns True if the object still exists, False if it's gone.
+    """
+    try:
+        resp = client.get(xml_tag=xml_tag, name=name)
+        # If we get a response with data, the object still exists
+        return bool(resp and "Response" in resp)
+    except (SophosFirewallZeroRecords, SophosFirewallAPIError):
+        return False
+    except Exception:
+        # Can't verify — assume it still exists to be safe
+        return True
+
+
 def remove_object(app_config, xml_tag, name):
     """Delete a Sophos object by xml_tag and name.
 
@@ -527,6 +543,9 @@ def remove_object(app_config, xml_tag, name):
         (True, None) on success or if object not found (already deleted).
         (False, error_msg) on failure.
     """
+    # SDK uses "Services" (plural) as xml_tag, not "Service"
+    if xml_tag == "Service":
+        xml_tag = "Services"
     try:
         client = get_client(app_config)
         _retry_on_rate_limit(client.remove, xml_tag, name)
@@ -538,9 +557,24 @@ def remove_object(app_config, xml_tag, name):
         return True, None
     except SophosFirewallAPIError as e:
         error_str = str(e)
+        lower = error_str.lower()
         # "No matching record" also means already deleted
-        if "no matching" in error_str.lower() or "does not exist" in error_str.lower():
+        if "no matching" in lower or "does not exist" in lower:
             return True, None
+        # Sophos sometimes returns generic errors even when deletion succeeded.
+        # Verify by checking if the object still exists.
+        if "operation could not be performed" in lower or "operation failed" in lower:
+            still_exists = _verify_object_exists(client, xml_tag, name)
+            if not still_exists:
+                cache_invalidate("existing_object_names", "existing_fw_rule_names",
+                                 "existing_nat_rule_names", "existing_services_with_details")
+                return True, None
+            return False, "Cannot delete — object is still referenced by other Sophos configuration"
+        # Translate common Sophos errors to user-friendly messages
+        if "referred by another" in lower or "in use" in lower:
+            return False, "Still in use by other rules/objects on Sophos"
+        if "deleting entity referred by another" in lower:
+            return False, "Still in use by other rules/objects on Sophos"
         return False, error_str
     except (SophosConnectionError, SophosAuthError) as e:
         return False, str(e)

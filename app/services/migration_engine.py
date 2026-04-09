@@ -532,11 +532,6 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
         reason="",
     )
 
-    # NAT-linked rules: migrate the firewall rule, ignore the NAT link
-    assoc = rule_row.get("associated_rule_id") or ""
-    if assoc:
-        plan.warnings.append({"level": "orange", "text": "NAT-linked rule — the associated NAT rule will be migrated separately in v0.7"})
-
     # Generate Sophos name
     name_base = descr if descr else f"pf_rule_{tracker}"
     sophos_name = sanitize_sophos_name(name_base)
@@ -563,7 +558,7 @@ def plan_fwrule_migration(rule_row, zone_mappings, network_mappings,
     # Destination zone: use override if provided, else default to Any
     dst_zone = dst_zone_override or "Any"
     if not dst_zone_override:
-        plan.warnings.append({"level": "orange", "text": "Destination zone set to 'Any' — select a destination zone or verify on Sophos after migration"})
+        plan.warnings.append({"level": "orange", "text": "Destination zone set to 'Any' — select a destination zone or verify on Sophos after migration", "acknowledgeable": True})
 
     # Resolve source network
     src_networks, src_warnings = _resolve_network(
@@ -896,20 +891,20 @@ def _propose_services(protocol, port_str):
         proto_upper = "TCP"
 
     if "-" in port_str:
-        # Port range → single service with multiple ServiceDetail entries
+        # Port range → single service with ONE range entry (e.g. "9841:9843")
+        # Sophos NAT rules require a single port range, not multiple individual ports
         parts = port_str.split("-")
         try:
             start = int(parts[0])
             end = int(parts[1])
-            ports = [str(p) for p in range(start, end + 1)]
+            range_port = f"{start}:{end}"
         except (ValueError, IndexError):
-            ports = [port_str]
+            range_port = port_str.replace("-", ":")
         name = sanitize_sophos_name(f"pf_range_{proto_upper}_{port_str}")
         return [{
             "name": name,
             "protocol": proto_upper,
-            "port": port_str,
-            "ports": ports,
+            "port": range_port,
         }]
     else:
         # Single port → single service, single entry

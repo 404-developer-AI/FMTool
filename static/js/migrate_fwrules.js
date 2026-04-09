@@ -512,7 +512,7 @@
         allMissingServices = [];
         let html = '';
 
-        // Collect unique missing services across all plans
+        // Collect unique missing services across all plans (with all rule_ids for tracking)
         const seenServices = new Set();
         for (const plan of plans) {
             const ms = plan.rule_params?._missing_service;
@@ -520,7 +520,13 @@
                 for (const svc of ms.proposed) {
                     if (!seenServices.has(svc.name)) {
                         seenServices.add(svc.name);
+                        svc.rule_ids = [plan.rule_id];
                         allMissingServices.push(svc);
+                    } else {
+                        const existing = allMissingServices.find(s => s.name === svc.name);
+                        if (existing && !existing.rule_ids.includes(plan.rule_id)) {
+                            existing.rule_ids.push(plan.rule_id);
+                        }
                     }
                 }
             }
@@ -537,7 +543,7 @@
             const actionClass = plan.action === 'create' ? 'dryrun-create' :
                                 plan.action === 'exists' ? 'dryrun-exists' : 'dryrun-skip';
 
-            // Collect all warning severity levels for this plan
+            // Determine highest warning severity for color coding
             const levels = new Set();
             if (plan.warnings && plan.warnings.length > 0) {
                 for (const w of plan.warnings) {
@@ -546,12 +552,17 @@
                 }
             }
             const severityAttr = levels.size > 0 ? [...levels].join(' ') : 'none';
+            const severity = levels.has('red') ? 'red' : levels.has('orange') ? 'orange' : 'green';
 
-            html += `<div class="dryrun-item ${actionClass}" data-severity="${severityAttr}">`;
-            html += `<div class="dryrun-item-header">`;
+            html += `<div class="dryrun-item dryrun-collapsed dryrun-severity-${severity} ${actionClass}" data-severity="${severityAttr}" data-rule-id="${plan.rule_id}">`;
+            html += `<div class="dryrun-item-header dryrun-toggle">`;
+            html += `<span class="dryrun-expand-icon">&#9654;</span>`;
             html += `<strong>${escapeHtml(plan.rule_name || plan.pf_description || '(unnamed)')}</strong>`;
             html += `<span class="dryrun-action">${escapeHtml(plan.action)}</span>`;
+            html += `<span class="dryrun-reason-short">${escapeHtml(plan.reason)}</span>`;
+            html += `<button class="btn btn-small btn-warning btn-dryrun-skip" data-id="${plan.rule_id}" title="Skip this rule">Skip</button>`;
             html += `</div>`;
+            html += `<div class="dryrun-details">`;
             html += `<div class="dryrun-reason">${escapeHtml(plan.reason)}</div>`;
 
             if (plan.rule_params && plan.action === 'create') {
@@ -565,7 +576,7 @@
                 html += `<div class="planned-object"><span class="object-type">Dst Networks</span><span class="object-name">${escapeHtml((p.dst_networks || []).join(', '))}</span></div>`;
                 if (p._missing_service) {
                     const ms = p._missing_service;
-                    const proposed = ms.proposed || [];
+                    const proposed = (ms.proposed || []).map(s => ({...s, rule_ids: [plan.rule_id]}));
                     const names = proposed.map(s => s.name).join(', ');
                     const dataAttr = escapeHtml(JSON.stringify(proposed));
                     html += `<div class="planned-object dryrun-missing-service">`;
@@ -595,12 +606,18 @@
                 for (const w of plan.warnings) {
                     const level = (typeof w === 'object' && w.level) ? w.level : 'orange';
                     const text = (typeof w === 'object' && w.text) ? w.text : w;
-                    html += `<div class="dryrun-warning dryrun-warning-${level}">${escapeHtml(text)}</div>`;
+                    const acknowledgeable = (typeof w === 'object' && w.acknowledgeable);
+                    html += `<div class="dryrun-warning dryrun-warning-${level}">`;
+                    html += escapeHtml(text);
+                    if (acknowledgeable) {
+                        html += ` <button class="btn-ack btn-sm" data-rule-id="${plan.rule_id}" data-warning-text="${escapeHtml(text)}" title="Acknowledge this warning">&#10003; OK</button>`;
+                    }
+                    html += `</div>`;
                 }
                 html += '</div>';
             }
 
-            html += '</div>';
+            html += '</div></div>';
         }
         dryrunResults.innerHTML = html;
 
@@ -627,6 +644,52 @@
                 createServicesOnSophos(allMissingServices, this);
             });
         }
+
+        // Show/hide bulk acknowledge button based on acknowledgeable warnings
+        const btnAckAll = document.getElementById('btn-ack-all');
+        if (btnAckAll) {
+            const ackCount = dryrunResults.querySelectorAll('.btn-ack').length;
+            btnAckAll.style.display = ackCount > 0 ? '' : 'none';
+        }
+    }
+
+    function acknowledgeWarning(warningEl) {
+        warningEl.classList.remove('dryrun-warning-orange');
+        warningEl.classList.add('dryrun-warning-green');
+        const ackBtn = warningEl.querySelector('.btn-ack');
+        if (ackBtn) ackBtn.remove();
+        // Recalculate severity for the parent dryrun-item
+        const item = warningEl.closest('.dryrun-item');
+        if (item) recalcSeverity(item);
+    }
+
+    function recalcSeverity(item) {
+        const warnings = item.querySelectorAll('.dryrun-warning');
+        const levels = new Set();
+        warnings.forEach(w => {
+            if (w.classList.contains('dryrun-warning-red')) levels.add('red');
+            else if (w.classList.contains('dryrun-warning-orange')) levels.add('orange');
+            else if (w.classList.contains('dryrun-warning-green')) levels.add('green');
+        });
+        const severity = levels.has('red') ? 'red' : levels.has('orange') ? 'orange' : levels.size > 0 ? 'green' : 'none';
+        item.className = item.className.replace(/dryrun-severity-\w+/, `dryrun-severity-${severity}`);
+        item.dataset.severity = levels.size > 0 ? [...levels].join(' ') : 'none';
+        // Update filter counts
+        const dryrunResults = document.getElementById('dryrun-results');
+        const allItems = dryrunResults.querySelectorAll('.dryrun-item');
+        const counts = {red: 0, orange: 0, green: 0, none: 0};
+        allItems.forEach(it => {
+            const sevs = (it.dataset.severity || 'none').split(' ');
+            for (const s of sevs) {
+                if (counts[s] !== undefined) counts[s]++;
+            }
+        });
+        const countRed = document.getElementById('dryrun-count-red');
+        const countOrange = document.getElementById('dryrun-count-orange');
+        const countGreen = document.getElementById('dryrun-count-green');
+        if (countRed) countRed.textContent = counts.red;
+        if (countOrange) countOrange.textContent = counts.orange;
+        if (countGreen) countGreen.textContent = counts.green;
     }
 
     // --- Dry-run warning severity filter ---
@@ -668,6 +731,26 @@
             }
         });
     }
+
+    // --- Acknowledge warnings (per-item via delegation + bulk) ---
+    dryrunResults.addEventListener('click', function(e) {
+        const ackBtn = e.target.closest('.btn-ack');
+        if (!ackBtn) return;
+        e.stopPropagation();
+        const warningEl = ackBtn.closest('.dryrun-warning');
+        if (warningEl) acknowledgeWarning(warningEl);
+        // Hide bulk button if no more ack buttons remain
+        const btnAckAll = document.getElementById('btn-ack-all');
+        if (btnAckAll && !dryrunResults.querySelector('.btn-ack')) btnAckAll.style.display = 'none';
+    });
+
+    document.getElementById('btn-ack-all').addEventListener('click', function() {
+        dryrunResults.querySelectorAll('.btn-ack').forEach(btn => {
+            const warningEl = btn.closest('.dryrun-warning');
+            if (warningEl) acknowledgeWarning(warningEl);
+        });
+        this.style.display = 'none';
+    });
 
     // --- Create missing services on Sophos ---
     async function createServicesOnSophos(services, btn) {
@@ -720,15 +803,58 @@
         }
     }
 
-    // Delegated click handler for per-rule create buttons
+    // Delegated click handlers on dryrun-results (registered once)
     dryrunResults.addEventListener('click', function(e) {
+        // Toggle expand/collapse
+        const toggle = e.target.closest('.dryrun-toggle');
+        if (toggle && !e.target.closest('.btn-dryrun-skip')) {
+            const item = toggle.closest('.dryrun-item');
+            if (item) item.classList.toggle('dryrun-collapsed');
+            return;
+        }
+        // Per-rule create service button
         const btn = e.target.closest('.btn-create-service');
+        if (btn) {
+            try {
+                const services = JSON.parse(btn.dataset.services);
+                createServicesOnSophos(services, btn);
+            } catch (err) {
+                showToast('Invalid service data', 'error');
+            }
+        }
+    });
+
+    // Skip button per item (registered once)
+    dryrunResults.addEventListener('click', async function(e) {
+        const btn = e.target.closest('.btn-dryrun-skip');
         if (!btn) return;
+        e.stopPropagation();
+        const ruleId = parseInt(btn.dataset.id);
+        btn.disabled = true;
+        btn.textContent = 'Skipping...';
+
         try {
-            const services = JSON.parse(btn.dataset.services);
-            createServicesOnSophos(services, btn);
+            const resp = await fetch('/migrate/firewall-rules/skip', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({rule_ids: [ruleId]}),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                lastDryrunIds = lastDryrunIds.filter(id => id !== ruleId);
+                const item = btn.closest('.dryrun-item');
+                if (item) item.remove();
+                updateRowStatus(ruleId, 'skipped');
+                showToast('Rule skipped', 'success');
+            } else {
+                showToast(data.message || 'Skip failed', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Skip';
+            }
         } catch (err) {
-            showToast('Invalid service data', 'error');
+            showToast('Network error', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Skip';
         }
     });
 
@@ -739,8 +865,10 @@
     });
 
     btnDryrunExecute.addEventListener('click', function() {
-        if (lastDryrunIds.length > 0) {
-            executeMigration(lastDryrunIds);
+        const currentIds = getSelectedIds();
+        const ids = currentIds.length > 0 ? currentIds : lastDryrunIds;
+        if (ids.length > 0) {
+            executeMigration(ids);
         }
     });
 
@@ -906,6 +1034,14 @@
         row.dataset.search = searchParts.join(' ');
         const cb = row.querySelector('.rule-checkbox');
         if (cb) cb.checked = false;
+        // Ensure log button is visible (activity exists after any status change)
+        if (!row.querySelector('.btn-log')) {
+            const logCell = row.cells[row.cells.length - 1];
+            if (logCell) {
+                const name = row.dataset.name || `rule_${ruleId}`;
+                logCell.innerHTML = `<button class="btn-log btn-sm" data-id="${ruleId}" data-name="${name}" data-category="firewall_rules" title="View log">Log</button>`;
+            }
+        }
     }
 
     function escapeHtml(str) {
@@ -1050,6 +1186,12 @@
                         progressInfo.textContent = `Rolling back ${event.index + 1} of ${event.total}...`;
                         if (event.success) {
                             updateRowStatus(event.item_id, 'pending');
+                        }
+                        // Show per-item details when objects failed
+                        if (event.objects_failed && event.objects_failed.length > 0) {
+                            for (const f of event.objects_failed) {
+                                showToast(`${f.name}: ${f.error}`, 'warning', 8000);
+                            }
                         }
                     } else if (event.type === 'done') {
                         progressBar.style.width = '100%';

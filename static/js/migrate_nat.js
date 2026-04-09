@@ -281,7 +281,7 @@
         allMissingHosts = [];
         let html = '';
 
-        // Collect unique missing services and hosts across all plans
+        // Collect unique missing services and hosts across all plans (with all rule_ids for tracking)
         const seenServices = new Set();
         const seenHosts = new Set();
         for (const plan of plans) {
@@ -291,7 +291,13 @@
                     for (const svc of ms.proposed) {
                         if (!seenServices.has(svc.name)) {
                             seenServices.add(svc.name);
+                            svc.rule_ids = [plan.rule_id];
                             allMissingServices.push(svc);
+                        } else {
+                            const existing = allMissingServices.find(s => s.name === svc.name);
+                            if (existing && !existing.rule_ids.includes(plan.rule_id)) {
+                                existing.rule_ids.push(plan.rule_id);
+                            }
                         }
                     }
                 }
@@ -300,7 +306,13 @@
             for (const mh of mhList) {
                 if (mh.name && !seenHosts.has(mh.name)) {
                     seenHosts.add(mh.name);
+                    mh.rule_ids = [plan.rule_id];
                     allMissingHosts.push(mh);
+                } else {
+                    const existing = allMissingHosts.find(h => h.name === mh.name);
+                    if (existing && !existing.rule_ids.includes(plan.rule_id)) {
+                        existing.rule_ids.push(plan.rule_id);
+                    }
                 }
             }
         }
@@ -329,12 +341,17 @@
                 }
             }
             const severityAttr = levels.size > 0 ? [...levels].join(' ') : 'none';
+            const severity = levels.has('red') ? 'red' : levels.has('orange') ? 'orange' : 'green';
 
-            html += `<div class="dryrun-item ${actionClass}" data-severity="${severityAttr}">`;
-            html += `<div class="dryrun-item-header">`;
+            html += `<div class="dryrun-item dryrun-collapsed dryrun-severity-${severity} ${actionClass}" data-severity="${severityAttr}" data-rule-id="${plan.rule_id}">`;
+            html += `<div class="dryrun-item-header dryrun-toggle">`;
+            html += `<span class="dryrun-expand-icon">&#9654;</span>`;
             html += `<strong>${escapeHtml(plan.rule_name || plan.pf_description || '(unnamed)')}</strong>`;
             html += `<span class="dryrun-action">${escapeHtml(plan.action)}</span>`;
+            html += `<span class="dryrun-reason-short">${escapeHtml(plan.reason)}</span>`;
+            html += `<button class="btn btn-small btn-warning btn-dryrun-skip" data-id="${plan.rule_id}" title="Skip this rule">Skip</button>`;
             html += `</div>`;
+            html += `<div class="dryrun-details">`;
             html += `<div class="dryrun-reason">${escapeHtml(plan.reason)}</div>`;
 
             if (plan.rule_params && plan.action === 'create') {
@@ -344,11 +361,10 @@
                 html += `<div class="planned-object"><span class="object-type">Original Dest</span><span class="object-name">${escapeHtml(p.original_destination || '')}</span></div>`;
                 html += `<div class="planned-object"><span class="object-type">Translated Dest</span><span class="object-name">${escapeHtml(p.translated_destination || '')}</span></div>`;
 
-                // Original service
                 const msList = p._missing_services || [];
                 const origMs = msList.find(m => m.type === 'original_service');
                 if (origMs) {
-                    const proposed = origMs.proposed || [];
+                    const proposed = (origMs.proposed || []).map(s => ({...s, rule_ids: [plan.rule_id]}));
                     const names = proposed.map(s => s.name).join(', ');
                     const dataAttr = escapeHtml(JSON.stringify(proposed));
                     html += `<div class="planned-object dryrun-missing-service">`;
@@ -360,10 +376,9 @@
                     html += `<div class="planned-object"><span class="object-type">Original Svc</span><span class="object-name">${escapeHtml(p.original_service || '(none)')}</span></div>`;
                 }
 
-                // Translated service
                 const transMs = msList.find(m => m.type === 'translated_service');
                 if (transMs) {
-                    const proposed = transMs.proposed || [];
+                    const proposed = (transMs.proposed || []).map(s => ({...s, rule_ids: [plan.rule_id]}));
                     const names = proposed.map(s => s.name).join(', ');
                     const dataAttr = escapeHtml(JSON.stringify(proposed));
                     html += `<div class="planned-object dryrun-missing-service">`;
@@ -375,7 +390,6 @@
                     html += `<div class="planned-object"><span class="object-type">Translated Svc</span><span class="object-name">${escapeHtml(p.translated_service || 'Original')}</span></div>`;
                 }
 
-                // Missing hosts
                 const mhList = p._missing_hosts || [];
                 for (const mh of mhList) {
                     const dataAttr = escapeHtml(JSON.stringify([mh]));
@@ -404,7 +418,7 @@
                 html += '</div>';
             }
 
-            html += '</div>';
+            html += '</div></div>';
         }
         dryrunResults.innerHTML = html;
 
@@ -572,8 +586,16 @@
         }
     }
 
-    // Delegated click handler for per-rule create buttons
+    // Delegated click handlers on dryrun-results (registered once)
     dryrunResults.addEventListener('click', function(e) {
+        // Toggle expand/collapse
+        const toggle = e.target.closest('.dryrun-toggle');
+        if (toggle && !e.target.closest('.btn-dryrun-skip')) {
+            const item = toggle.closest('.dryrun-item');
+            if (item) item.classList.toggle('dryrun-collapsed');
+            return;
+        }
+        // Per-rule create service button
         const svcBtn = e.target.closest('.btn-create-service');
         if (svcBtn) {
             try {
@@ -584,6 +606,7 @@
             }
             return;
         }
+        // Per-rule create host button
         const hostBtn = e.target.closest('.btn-create-host');
         if (hostBtn) {
             try {
@@ -595,6 +618,40 @@
         }
     });
 
+    // Skip button per item (registered once)
+    dryrunResults.addEventListener('click', async function(e) {
+        const btn = e.target.closest('.btn-dryrun-skip');
+        if (!btn) return;
+        e.stopPropagation();
+        const ruleId = parseInt(btn.dataset.id);
+        btn.disabled = true;
+        btn.textContent = 'Skipping...';
+
+        try {
+            const resp = await fetch('/migrate/nat-rules/skip', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({rule_ids: [ruleId]}),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                lastDryrunIds = lastDryrunIds.filter(id => id !== ruleId);
+                const item = btn.closest('.dryrun-item');
+                if (item) item.remove();
+                updateRowStatus(ruleId, 'skipped');
+                showToast('NAT rule skipped', 'success');
+            } else {
+                showToast(data.message || 'Skip failed', 'error');
+                btn.disabled = false;
+                btn.textContent = 'Skip';
+            }
+        } catch (err) {
+            showToast('Network error', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Skip';
+        }
+    });
+
     btnDryrunClose.addEventListener('click', function() {
         dryrunPanel.style.display = 'none';
         lastDryrunIds = [];
@@ -603,8 +660,10 @@
     });
 
     btnDryrunExecute.addEventListener('click', function() {
-        if (lastDryrunIds.length > 0) {
-            executeMigration(lastDryrunIds);
+        const currentIds = getSelectedIds();
+        const ids = currentIds.length > 0 ? currentIds : lastDryrunIds;
+        if (ids.length > 0) {
+            executeMigration(ids);
         }
     });
 
@@ -770,6 +829,14 @@
         row.dataset.search = searchParts.join(' ');
         const cb = row.querySelector('.rule-checkbox');
         if (cb) cb.checked = false;
+        // Ensure log button is visible (activity exists after any status change)
+        if (!row.querySelector('.btn-log')) {
+            const logCell = row.cells[row.cells.length - 1];
+            if (logCell) {
+                const name = row.dataset.name || `nat_${ruleId}`;
+                logCell.innerHTML = `<button class="btn-log btn-sm" data-id="${ruleId}" data-name="${name}" data-category="nat_rules" title="View log">Log</button>`;
+            }
+        }
     }
 
     function escapeHtml(str) {
@@ -914,6 +981,11 @@
                         progressInfo.textContent = `Rolling back ${event.index + 1} of ${event.total}...`;
                         if (event.success) {
                             updateRowStatus(event.item_id, 'pending');
+                        }
+                        if (event.objects_failed && event.objects_failed.length > 0) {
+                            for (const f of event.objects_failed) {
+                                showToast(`${f.name}: ${f.error}`, 'warning', 8000);
+                            }
                         }
                     } else if (event.type === 'done') {
                         progressBar.style.width = '100%';

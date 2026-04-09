@@ -1,5 +1,5 @@
 /**
- * Activity Log page JavaScript — filtering, sorting, pagination.
+ * Activity Log page JavaScript — filtering, sorting, pagination, expandable rows.
  */
 (function() {
     'use strict';
@@ -22,6 +22,28 @@
     let totalPages = 1;
     let searchTimeout = null;
 
+    const ACTION_LABELS = {
+        migrate: 'Migrate',
+        dry_run: 'Dry Run',
+        skip: 'Skip',
+        reset: 'Reset',
+        create_service: 'Create Service',
+        create_host: 'Create Host',
+        check_duplicates: 'Check Duplicates',
+        import: 'Import',
+        cleanup: 'Cleanup',
+        rollback: 'Rollback',
+    };
+
+    const CATEGORY_LABELS = {
+        aliases: 'Aliases',
+        firewall_rules: 'Firewall Rules',
+        nat_rules: 'NAT Rules',
+        services: 'Services',
+        hosts: 'Hosts',
+        system: 'System',
+    };
+
     function buildParams() {
         const params = new URLSearchParams();
         if (filterCategory.value) params.set('category', filterCategory.value);
@@ -38,7 +60,7 @@
     }
 
     async function loadData() {
-        body.innerHTML = '<tr><td colspan="7" class="text-muted">Loading...</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" class="text-muted">Loading...</td></tr>';
         try {
             const resp = await fetch('/activity-log/data?' + buildParams());
             const data = await resp.json();
@@ -49,38 +71,138 @@
             btnPrev.disabled = data.page <= 1;
             btnNext.disabled = data.page >= totalPages;
         } catch (e) {
-            body.innerHTML = '<tr><td colspan="7" class="text-muted">Failed to load activity log.</td></tr>';
+            body.innerHTML = '<tr><td colspan="6" class="text-muted">Failed to load activity log.</td></tr>';
         }
     }
 
     function renderTable(entries) {
         if (!entries || entries.length === 0) {
-            body.innerHTML = '<tr><td colspan="7" class="text-muted">No log entries found.</td></tr>';
+            body.innerHTML = '<tr><td colspan="6" class="text-muted">No log entries found.</td></tr>';
             return;
         }
-        body.innerHTML = entries.map(e => {
+        let html = '';
+        for (const e of entries) {
             const ts = formatTimestamp(e.timestamp);
-            const resultClass = e.result === 'success' ? 'status-migrated' :
-                                e.result === 'fail' ? 'status-failed' : 'status-pending';
-            const details = e.details ? truncate(e.details, 80) : '';
-            const error = e.error_message ? truncate(e.error_message, 60) : '';
-            return `<tr>
-                <td class="text-muted">${ts}</td>
-                <td>${escapeHtml(e.action_type)}</td>
-                <td>${escapeHtml(e.category)}</td>
-                <td>${escapeHtml(e.item_name || '-')}</td>
-                <td class="text-muted" title="${escapeHtml(e.details || '')}">${escapeHtml(details)}</td>
-                <td><span class="status-badge ${resultClass}">${e.result}</span></td>
-                <td class="text-muted" title="${escapeHtml(e.error_message || '')}">${escapeHtml(error)}</td>
-            </tr>`;
-        }).join('');
+            const actionLabel = ACTION_LABELS[e.action_type] || e.action_type;
+            const categoryLabel = CATEGORY_LABELS[e.category] || e.category;
+            const resultClass = e.result === 'success' ? 'result-success' :
+                                e.result === 'fail' ? 'result-fail' : 'result-error';
+            const summary = buildSummary(e);
+            const hasDetails = e.details || e.error_message;
+
+            html += `<tr class="log-row${hasDetails ? ' log-expandable' : ''}" data-id="${e.id}">`;
+            html += `<td class="log-ts">${escapeHtml(ts)}</td>`;
+            html += `<td><span class="log-action log-action-${e.action_type}">${escapeHtml(actionLabel)}</span></td>`;
+            html += `<td><span class="log-category">${escapeHtml(categoryLabel)}</span></td>`;
+            html += `<td class="log-item">${escapeHtml(e.item_name || '-')}</td>`;
+            html += `<td><span class="log-result ${resultClass}">${escapeHtml(e.result)}</span></td>`;
+            html += `<td class="log-summary">${escapeHtml(summary)}${hasDetails ? ' <span class="log-expand-hint">&#9654;</span>' : ''}</td>`;
+            html += `</tr>`;
+
+            if (hasDetails) {
+                html += `<tr class="log-detail-row" data-parent="${e.id}" style="display:none">`;
+                html += `<td colspan="6"><div class="log-detail-content">`;
+                if (e.error_message) {
+                    html += `<div class="log-detail-error"><strong>Error:</strong> ${escapeHtml(e.error_message)}</div>`;
+                }
+                if (e.details) {
+                    html += formatDetails(e.details);
+                }
+                html += `</div></td></tr>`;
+            }
+        }
+        body.innerHTML = html;
+    }
+
+    function buildSummary(entry) {
+        if (entry.error_message && entry.result !== 'success') {
+            return truncate(entry.error_message, 80);
+        }
+        if (!entry.details) return '';
+        try {
+            const d = JSON.parse(entry.details);
+            // Migration: show object count
+            if (d.objects_created && Array.isArray(d.objects_created)) {
+                return `${d.objects_created.length} object(s) created`;
+            }
+            if (d.rule_name) return `Rule: ${d.rule_name}`;
+            if (d.sophos_name) return d.sophos_name;
+            if (d.matched) return `${d.matched} duplicate(s) found`;
+            if (d.duplicates_found !== undefined) return `${d.duplicates_found} duplicate(s) found`;
+            if (d.objects_deleted !== undefined) return `${d.objects_deleted} object(s) deleted`;
+            if (d.tables_count !== undefined) return `${d.tables_count} tables, ${d.total_items || 0} items`;
+            // Fallback: first meaningful key
+            const keys = Object.keys(d);
+            if (keys.length <= 3) {
+                return keys.map(k => `${k}: ${truncate(String(d[k]), 30)}`).join(', ');
+            }
+            return `${keys.length} fields`;
+        } catch {
+            return truncate(entry.details, 80);
+        }
+    }
+
+    function formatDetails(detailsStr) {
+        try {
+            const d = JSON.parse(detailsStr);
+            return formatObject(d);
+        } catch {
+            return `<div class="log-detail-text">${escapeHtml(detailsStr)}</div>`;
+        }
+    }
+
+    function formatObject(obj) {
+        if (Array.isArray(obj)) {
+            if (obj.length === 0) return '<span class="text-muted">(empty)</span>';
+            // Array of simple values
+            if (typeof obj[0] !== 'object') {
+                return `<div class="log-detail-list">${obj.map(v => `<span class="log-detail-tag">${escapeHtml(String(v))}</span>`).join(' ')}</div>`;
+            }
+            // Array of objects — render as mini-cards
+            let html = '<div class="log-detail-array">';
+            for (const item of obj) {
+                html += '<div class="log-detail-card">';
+                if (typeof item === 'object' && item !== null) {
+                    for (const [k, v] of Object.entries(item)) {
+                        html += `<div class="log-detail-field"><span class="log-detail-key">${escapeHtml(k)}:</span> <span class="log-detail-value">${escapeHtml(String(v))}</span></div>`;
+                    }
+                } else {
+                    html += escapeHtml(String(item));
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+            return html;
+        }
+
+        if (typeof obj === 'object' && obj !== null) {
+            let html = '<div class="log-detail-fields">';
+            for (const [k, v] of Object.entries(obj)) {
+                html += `<div class="log-detail-field">`;
+                html += `<span class="log-detail-key">${escapeHtml(k)}:</span> `;
+                if (Array.isArray(v)) {
+                    html += formatObject(v);
+                } else if (typeof v === 'object' && v !== null) {
+                    html += formatObject(v);
+                } else {
+                    html += `<span class="log-detail-value">${escapeHtml(String(v))}</span>`;
+                }
+                html += `</div>`;
+            }
+            html += '</div>';
+            return html;
+        }
+
+        return `<span class="log-detail-value">${escapeHtml(String(obj))}</span>`;
     }
 
     function formatTimestamp(ts) {
         if (!ts) return '';
         try {
             const d = new Date(ts);
-            return d.toLocaleString();
+            const date = d.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            const time = d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            return `${date} ${time}`;
         } catch {
             return ts;
         }
@@ -97,6 +219,18 @@
         div.textContent = str;
         return div.innerHTML;
     }
+
+    // Expand/collapse rows
+    body.addEventListener('click', function(e) {
+        const row = e.target.closest('.log-expandable');
+        if (!row) return;
+        const id = row.dataset.id;
+        const detailRow = body.querySelector(`.log-detail-row[data-parent="${id}"]`);
+        if (!detailRow) return;
+        const isOpen = detailRow.style.display !== 'none';
+        detailRow.style.display = isOpen ? 'none' : '';
+        row.classList.toggle('log-expanded', !isOpen);
+    });
 
     // Sort headers
     document.querySelectorAll('.sortable').forEach(th => {

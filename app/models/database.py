@@ -490,21 +490,24 @@ def init_db(db_path):
 
 
 def backfill_sophos_objects(db_path):
-    """Backfill sophos_objects from activity_log for pre-v0.8b migrations.
+    """Backfill sophos_objects from activity_log for migrations without tracking.
 
-    Only runs when sophos_objects is empty but successful migrations exist in the log.
+    Finds successful migrations in activity_log that have no corresponding
+    sophos_objects rows, and creates tracking entries for them.
     Backfilled entries lack parent/child relationships and precise type info for aliases.
     """
     conn = get_db(db_path)
 
-    count = conn.execute("SELECT COUNT(*) FROM sophos_objects").fetchone()[0]
-    if count > 0:
-        conn.close()
-        return
-
+    # Find successful migrations that have NO tracking rows yet
     rows = conn.execute(
-        "SELECT category, item_id, item_name, details FROM activity_log "
-        "WHERE action_type = 'migrate' AND result = 'success' AND details IS NOT NULL"
+        "SELECT al.category, al.item_id, al.item_name, al.details "
+        "FROM activity_log al "
+        "WHERE al.action_type = 'migrate' AND al.result = 'success' AND al.details IS NOT NULL "
+        "AND NOT EXISTS ("
+        "  SELECT 1 FROM sophos_objects so "
+        "  WHERE so.source_table = REPLACE(al.category, '-', '_') "
+        "  AND so.source_id = al.item_id"
+        ")"
     ).fetchall()
 
     if not rows:
@@ -513,6 +516,7 @@ def backfill_sophos_objects(db_path):
 
     now = datetime.now(timezone.utc).isoformat()
     inserted = 0
+    seen = set()  # Track (source_table, source_id) to skip duplicates within same batch
 
     for row in rows:
         try:
@@ -522,6 +526,12 @@ def backfill_sophos_objects(db_path):
 
         category = row["category"]
         item_id = row["item_id"]
+
+        # Skip if we already processed this item in this batch
+        batch_key = (category, item_id)
+        if batch_key in seen:
+            continue
+        seen.add(batch_key)
 
         if category == "aliases":
             objects_created = details.get("objects_created", [])
@@ -1336,6 +1346,23 @@ def delete_sophos_object_rows(db_path, sophos_object_ids):
     cur = conn.execute(
         f"DELETE FROM sophos_objects WHERE id IN ({placeholders})",
         list(sophos_object_ids),
+    )
+    conn.commit()
+    deleted = cur.rowcount
+    conn.close()
+    return deleted
+
+
+def delete_sophos_object_by_name(db_path, sophos_name, sophos_type):
+    """Delete ALL tracking rows for a Sophos object by name and type.
+
+    Used when an object is successfully deleted from Sophos to clean up
+    all references across multiple rules that shared it.
+    """
+    conn = get_db(db_path)
+    cur = conn.execute(
+        "DELETE FROM sophos_objects WHERE sophos_name = ? AND sophos_type = ?",
+        (sophos_name, sophos_type),
     )
     conn.commit()
     deleted = cur.rowcount
