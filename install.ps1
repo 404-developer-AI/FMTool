@@ -19,6 +19,14 @@ $DefaultDir  = Join-Path $HOME "FMTool"
 $MinPyMajor  = 3
 $MinPyMinor  = 10
 
+$GitInstallerUrl    = "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.1/Git-2.47.1-64-bit.exe"
+$GitInstallerFile   = "Git-2.47.1-64-bit.exe"
+$GitSilentArgs      = @("/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/SUPPRESSMSGBOXES", "/CLOSEAPPLICATIONS", "/NORESTARTAPPLICATIONS")
+
+$PythonInstallerUrl  = "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
+$PythonInstallerFile = "python-3.12.7-amd64.exe"
+$PythonSilentArgs    = @("/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_launcher=1", "Include_test=0")
+
 function Write-Step   { param($Msg) Write-Host "==> $Msg" -ForegroundColor Cyan }
 function Write-Ok     { param($Msg) Write-Host "    $Msg" -ForegroundColor Green }
 function Write-Warn2  { param($Msg) Write-Host "    $Msg" -ForegroundColor Yellow }
@@ -40,14 +48,7 @@ function Install-WithWinget {
         [string]$DisplayName,
         [string]$WingetId
     )
-    if (-not (Test-Command "winget")) {
-        Write-Err2 "winget not available — cannot auto-install $DisplayName."
-        Write-Err2 "Install winget (App Installer) from the Microsoft Store, or install $DisplayName manually."
-        return $false
-    }
-    $answer = Read-Host "Install $DisplayName automatically via winget? [Y/n]"
-    if ($answer -ne "" -and $answer -notmatch "^[yY]") { return $false }
-
+    if (-not (Test-Command "winget")) { return $false }
     Write-Step "Installing $DisplayName via winget (this may take a minute)"
     try {
         winget install --id $WingetId -e --accept-source-agreements --accept-package-agreements --silent
@@ -57,6 +58,59 @@ function Install-WithWinget {
     }
     Update-PathFromRegistry
     return $true
+}
+
+function Install-FromUrl {
+    param(
+        [string]$DisplayName,
+        [string]$Url,
+        [string]$FileName,
+        [string[]]$SilentArgs
+    )
+    Write-Step "Downloading $DisplayName installer"
+    $tempPath = Join-Path $env:TEMP $FileName
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $Url -OutFile $tempPath -UseBasicParsing
+    } catch {
+        Write-Err2 "Download failed: $_"
+        return $false
+    }
+    Write-Step "Running $DisplayName installer (silent, may take a few minutes)"
+    try {
+        $proc = Start-Process -FilePath $tempPath -ArgumentList $SilentArgs -Wait -PassThru
+        if ($proc.ExitCode -ne 0) {
+            Write-Err2 "$DisplayName installer exited with code $($proc.ExitCode)"
+            return $false
+        }
+    } catch {
+        Write-Err2 "Installer launch failed: $_"
+        return $false
+    } finally {
+        Remove-Item $tempPath -ErrorAction SilentlyContinue
+    }
+    Update-PathFromRegistry
+    return $true
+}
+
+function Install-Prerequisite {
+    param(
+        [string]$DisplayName,
+        [string]$WingetId,
+        [string]$DirectUrl,
+        [string]$DirectFileName,
+        [string[]]$DirectSilentArgs
+    )
+    $answer = Read-Host "Install $DisplayName automatically? [Y/n]"
+    if ($answer -ne "" -and $answer -notmatch "^[yY]") { return $false }
+
+    if (Test-Command "winget") {
+        if (Install-WithWinget -DisplayName $DisplayName -WingetId $WingetId) { return $true }
+        Write-Warn2 "winget install failed — falling back to direct download."
+    } else {
+        Write-Warn2 "winget not available — using direct download."
+    }
+    return (Install-FromUrl -DisplayName $DisplayName -Url $DirectUrl -FileName $DirectFileName -SilentArgs $DirectSilentArgs)
 }
 
 function Get-PythonCommand {
@@ -90,9 +144,19 @@ Write-Step "Checking prerequisites"
 
 if (-not (Test-Command "git")) {
     Write-Warn2 "git not found."
-    if (-not (Install-WithWinget -DisplayName "Git for Windows" -WingetId "Git.Git")) {
+    $installed = Install-Prerequisite `
+        -DisplayName "Git for Windows" `
+        -WingetId "Git.Git" `
+        -DirectUrl $GitInstallerUrl `
+        -DirectFileName $GitInstallerFile `
+        -DirectSilentArgs $GitSilentArgs
+    if (-not $installed) {
         Write-Err2 "Install Git for Windows manually: https://git-scm.com/download/win"
         throw "git is required but was not found in PATH"
+    }
+    if (-not (Test-Command "git")) {
+        $gitCmdDir = "C:\Program Files\Git\cmd"
+        if (Test-Path (Join-Path $gitCmdDir "git.exe")) { $env:Path = "$gitCmdDir;$env:Path" }
     }
     if (-not (Test-Command "git")) {
         Write-Err2 "git still not found after install. Close and reopen PowerShell, then rerun the installer."
@@ -104,7 +168,13 @@ Write-Ok "git found"
 $py = Get-PythonCommand
 if (-not $py) {
     Write-Warn2 "Python $MinPyMajor.$MinPyMinor+ not found."
-    if (-not (Install-WithWinget -DisplayName "Python 3.12" -WingetId "Python.Python.3.12")) {
+    $installed = Install-Prerequisite `
+        -DisplayName "Python 3.12" `
+        -WingetId "Python.Python.3.12" `
+        -DirectUrl $PythonInstallerUrl `
+        -DirectFileName $PythonInstallerFile `
+        -DirectSilentArgs $PythonSilentArgs
+    if (-not $installed) {
         Write-Err2 "Install Python manually from https://www.python.org/downloads/windows/"
         Write-Err2 "Make sure to tick 'Add Python to PATH' during installation."
         throw "Python $MinPyMajor.$MinPyMinor+ is required but was not found"
