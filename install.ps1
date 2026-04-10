@@ -29,6 +29,36 @@ function Test-Command {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Update-PathFromRegistry {
+    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath    = [System.Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = ($machinePath, $userPath -join ";")
+}
+
+function Install-WithWinget {
+    param(
+        [string]$DisplayName,
+        [string]$WingetId
+    )
+    if (-not (Test-Command "winget")) {
+        Write-Err2 "winget not available — cannot auto-install $DisplayName."
+        Write-Err2 "Install winget (App Installer) from the Microsoft Store, or install $DisplayName manually."
+        return $false
+    }
+    $answer = Read-Host "Install $DisplayName automatically via winget? [Y/n]"
+    if ($answer -ne "" -and $answer -notmatch "^[yY]") { return $false }
+
+    Write-Step "Installing $DisplayName via winget (this may take a minute)"
+    try {
+        winget install --id $WingetId -e --accept-source-agreements --accept-package-agreements --silent
+    } catch {
+        Write-Err2 "winget install failed: $_"
+        return $false
+    }
+    Update-PathFromRegistry
+    return $true
+}
+
 function Get-PythonCommand {
     foreach ($candidate in @("python", "py -3", "python3")) {
         $parts = $candidate -split " "
@@ -59,16 +89,31 @@ Write-Host ""
 Write-Step "Checking prerequisites"
 
 if (-not (Test-Command "git")) {
-    Write-Err2 "git not found. Install Git for Windows: https://git-scm.com/download/win"
-    throw "git is required but was not found in PATH"
+    Write-Warn2 "git not found."
+    if (-not (Install-WithWinget -DisplayName "Git for Windows" -WingetId "Git.Git")) {
+        Write-Err2 "Install Git for Windows manually: https://git-scm.com/download/win"
+        throw "git is required but was not found in PATH"
+    }
+    if (-not (Test-Command "git")) {
+        Write-Err2 "git still not found after install. Close and reopen PowerShell, then rerun the installer."
+        throw "git not available in current session — restart PowerShell"
+    }
 }
 Write-Ok "git found"
 
 $py = Get-PythonCommand
 if (-not $py) {
-    Write-Err2 "Python $MinPyMajor.$MinPyMinor+ not found. Install from https://www.python.org/downloads/windows/"
-    Write-Err2 "Make sure to tick 'Add Python to PATH' during installation."
-    throw "Python $MinPyMajor.$MinPyMinor+ is required but was not found"
+    Write-Warn2 "Python $MinPyMajor.$MinPyMinor+ not found."
+    if (-not (Install-WithWinget -DisplayName "Python 3.12" -WingetId "Python.Python.3.12")) {
+        Write-Err2 "Install Python manually from https://www.python.org/downloads/windows/"
+        Write-Err2 "Make sure to tick 'Add Python to PATH' during installation."
+        throw "Python $MinPyMajor.$MinPyMinor+ is required but was not found"
+    }
+    $py = Get-PythonCommand
+    if (-not $py) {
+        Write-Err2 "Python still not found after install. Close and reopen PowerShell, then rerun the installer."
+        throw "Python not available in current session — restart PowerShell"
+    }
 }
 Write-Ok "Python $($py.Version) found ($($py.Command))"
 
