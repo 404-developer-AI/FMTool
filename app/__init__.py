@@ -21,6 +21,7 @@ def create_app():
     # Ensure instance directories exist
     os.makedirs(app.config["DATABASE_PATH"].rsplit(os.sep, 1)[0], exist_ok=True)
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["BRANDING_FOLDER"], exist_ok=True)
 
     # Initialize database
     from app.models.database import init_db
@@ -34,6 +35,8 @@ def create_app():
     from app.routes.upload import upload_bp
     from app.routes.migrate import migrate_bp
     from app.routes.activity_log import activity_bp
+    from app.routes.settings import settings_bp
+    from app.routes.export import export_bp
 
     app.register_blueprint(main_bp)
     app.register_blueprint(overview_bp)
@@ -41,5 +44,7 @@ def create_app():
     app.register_blueprint(upload_bp)
     app.register_blueprint(migrate_bp)
     app.register_blueprint(activity_bp)
+    app.register_blueprint(settings_bp)
+    app.register_blueprint(export_bp)
 
     return app

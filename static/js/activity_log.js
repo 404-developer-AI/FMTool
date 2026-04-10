@@ -274,6 +274,38 @@
 
     btnRefresh.addEventListener('click', loadData);
 
+    function buildExportUrl(format) {
+        const params = new URLSearchParams();
+        const categoryMap = {
+            aliases: 'aliases',
+            firewall_rules: 'firewall_rules',
+            nat_rules: 'nat_rules',
+        };
+        const scope = categoryMap[filterCategory.value] || 'global';
+        params.set('scope', scope);
+        if (filterDateFrom.value && filterDateTo.value) {
+            params.set('mode', 'range');
+            params.set('date_from', filterDateFrom.value + 'T00:00:00');
+            params.set('date_to', filterDateTo.value + 'T23:59:59');
+        } else {
+            params.set('mode', 'snapshot');
+        }
+        return '/export/' + format + '?' + params.toString();
+    }
+
+    const btnExportCsv = document.getElementById('btn-export-csv');
+    const btnExportPdf = document.getElementById('btn-export-pdf');
+    if (btnExportCsv) {
+        btnExportCsv.addEventListener('click', function() {
+            window.location.href = buildExportUrl('csv');
+        });
+    }
+    if (btnExportPdf) {
+        btnExportPdf.addEventListener('click', function() {
+            window.location.href = buildExportUrl('pdf');
+        });
+    }
+
     btnPrev.addEventListener('click', function() {
         if (currentPage > 1) {
             currentPage--;

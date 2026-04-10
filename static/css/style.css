@@ -1920,3 +1920,116 @@ a:hover {
     background: var(--color-info, #3498db);
     color: white;
 }
+
+/* --- v0.8c: Reporting & Export --- */
+
+.export-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0;
+    background: var(--color-bg-card, #1e2733);
+    border: 1px solid var(--color-border, #2d3948);
+    border-radius: 6px;
+}
+.export-bar-hint {
+    margin-left: 0.6rem;
+    color: var(--color-text-muted, #8b98a9);
+    font-size: 0.85rem;
+}
+.export-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.controls-spacer {
+    flex: 1 1 auto;
+}
+
+.flash-messages {
+    margin: 0.5rem 0 1rem 0;
+}
+.flash {
+    padding: 0.7rem 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: 4px;
+    border: 1px solid transparent;
+}
+.flash-success {
+    background: rgba(27, 127, 58, 0.15);
+    border-color: rgba(27, 127, 58, 0.5);
+    color: #5fd58a;
+}
+.flash-error {
+    background: rgba(176, 0, 32, 0.15);
+    border-color: rgba(176, 0, 32, 0.5);
+    color: #ff6b7a;
+}
+
+/* Report Settings page */
+.settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 1.2rem;
+    margin-top: 1rem;
+}
+.settings-grid .card {
+    padding: 1.2rem 1.4rem;
+}
+.settings-form .form-row {
+    margin-bottom: 1rem;
+}
+.settings-form label {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.settings-form input[type="text"],
+.settings-form input[type="file"] {
+    width: 100%;
+    padding: 0.55rem 0.7rem;
+    background: var(--color-bg-input, #121a24);
+    border: 1px solid var(--color-border, #2d3948);
+    color: var(--color-text, #e6ecf3);
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+.settings-form .help {
+    margin-top: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted, #8b98a9);
+}
+.settings-form .form-actions {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 1rem;
+}
+.logo-preview-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 110px;
+    padding: 0.8rem;
+    margin-bottom: 1rem;
+    background: #ffffff;
+    border: 1px dashed var(--color-border, #2d3948);
+    border-radius: 4px;
+}
+.logo-preview-wrap img {
+    max-height: 90px;
+    max-width: 100%;
+    object-fit: contain;
+}
+.logo-placeholder {
+    color: #888;
+    font-style: italic;
+    font-size: 0.9rem;
+}
+.subtitle {
+    color: var(--color-text-muted, #8b98a9);
+    margin-top: -0.3rem;
+    margin-bottom: 1rem;
+}

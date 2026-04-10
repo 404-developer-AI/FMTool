@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Report Settings — FMTool{% endblock %}
+
+{% block content %}
+<h1>Report Settings</h1>
+<p class="subtitle">Branding for exported CSV and PDF migration reports.</p>
+
+<div class="settings-grid">
+    <section class="card">
+        <h2>Branding</h2>
+        <form method="post" action="{{ url_for('settings.save_report_settings_route') }}" class="settings-form">
+            <div class="form-row">
+                <label for="company_name">Company name</label>
+                <input type="text" id="company_name" name="company_name"
+                       value="{{ settings.company_name }}"
+                       placeholder="Your Company B.V." maxlength="120">
+                <p class="help">Shown on the PDF cover page.</p>
+            </div>
+            <div class="form-row">
+                <label for="report_title">Report title</label>
+                <input type="text" id="report_title" name="report_title"
+                       value="{{ settings.report_title }}"
+                       placeholder="pfSense to Sophos XGS Migration Report" maxlength="200">
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Save</button>
+            </div>
+        </form>
+    </section>
+
+    <section class="card">
+        <h2>Logo</h2>
+        <p class="help">PNG or JPG, max 2 MB. Rendered on the PDF cover page.</p>
+
+        <div class="logo-preview-wrap">
+            {% if has_logo %}
+                <img id="logo-preview" src="{{ url_for('settings.serve_logo') }}?t={{ range(1,999999) | random }}" alt="Current logo">
+            {% else %}
+                <div id="logo-placeholder" class="logo-placeholder">No logo uploaded</div>
+            {% endif %}
+        </div>
+
+        <form method="post" action="{{ url_for('settings.upload_logo_route') }}"
+              enctype="multipart/form-data" class="settings-form" id="logo-upload-form">
+            <div class="form-row">
+                <label for="logo">Upload new logo</label>
+                <input type="file" id="logo" name="logo" accept=".png,.jpg,.jpeg" required>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Upload</button>
+                {% if has_logo %}
+                    <button type="button" class="btn btn-danger" id="delete-logo-btn">Remove logo</button>
+                {% endif %}
+            </div>
+        </form>
+
+        <form method="post" action="{{ url_for('settings.delete_logo_route') }}"
+              id="delete-logo-form" style="display:none;"></form>
+    </section>
+</div>
+
+<script src="{{ url_for('static', filename='js/report_settings.js') }}"></script>
+{% endblock %}

@@ -481,6 +481,12 @@ def init_db(db_path):
         );
         CREATE INDEX IF NOT EXISTS idx_sophos_objects_source ON sophos_objects(source_table, source_id);
         CREATE INDEX IF NOT EXISTS idx_sophos_objects_parent ON sophos_objects(parent_sophos_id);
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TEXT NOT NULL
+        );
     """)
 
     conn.commit()
@@ -1387,3 +1393,95 @@ def cleanup_all(db_path, upload_folder):
     # Remove uploaded files
     for f in globmod.glob(os.path.join(upload_folder, "*.xml")):
         os.remove(f)
+
+
+# --- App settings (key/value store) ---
+
+
+def get_setting(db_path, key, default=None):
+    """Get a single app setting by key. Returns default if not found."""
+    conn = get_db(db_path)
+    row = conn.execute(
+        "SELECT value FROM app_settings WHERE key = ?", (key,)
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return default
+    return row["value"]
+
+
+def set_setting(db_path, key, value):
+    """Insert or update an app setting."""
+    conn = get_db(db_path)
+    conn.execute(
+        "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (key, value, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_settings(db_path):
+    """Return all app_settings as a dict."""
+    conn = get_db(db_path)
+    rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+    conn.close()
+    return {r["key"]: r["value"] for r in rows}
+
+
+# --- Reporting helpers ---
+
+
+def get_last_activity_per_item(db_path, category, item_ids):
+    """Return latest activity_log entry per item_id for the given category.
+
+    Result: {item_id: {"timestamp": str, "result": str, "error_message": str|None, "action_type": str}}
+    Only considers action_types relevant to migration state changes.
+    """
+    if not item_ids:
+        return {}
+    conn = get_db(db_path)
+    placeholders = ",".join("?" * len(item_ids))
+    rows = conn.execute(
+        f"SELECT item_id, timestamp, result, error_message, action_type "
+        f"FROM activity_log "
+        f"WHERE category = ? AND item_id IN ({placeholders}) "
+        f"AND action_type IN ('migrate','skip','reset') "
+        f"ORDER BY item_id, timestamp DESC",
+        [category] + list(item_ids),
+    ).fetchall()
+    conn.close()
+
+    result = {}
+    for row in rows:
+        iid = row["item_id"]
+        if iid in result:
+            continue  # already have the latest (DESC order)
+        result[iid] = {
+            "timestamp": row["timestamp"],
+            "result": row["result"],
+            "error_message": row["error_message"],
+            "action_type": row["action_type"],
+        }
+    return result
+
+
+def get_activity_items_in_range(db_path, date_from, date_to, category=None):
+    """Return (category, item_id) tuples of items with activity in the given range.
+
+    Used for date-range report mode to filter which items to include.
+    """
+    conn = get_db(db_path)
+    query = (
+        "SELECT DISTINCT category, item_id FROM activity_log "
+        "WHERE item_id IS NOT NULL AND timestamp >= ? AND timestamp <= ? "
+        "AND action_type IN ('migrate','skip','reset')"
+    )
+    params = [date_from, date_to]
+    if category:
+        query += " AND category = ?"
+        params.append(category)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [(r["category"], r["item_id"]) for r in rows]

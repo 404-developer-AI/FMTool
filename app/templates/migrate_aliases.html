@@ -63,6 +63,9 @@
     <button class="btn btn-success" id="btn-migrate" {% if not configured %}disabled{% endif %}>Migrate Selected</button>
     <button class="btn btn-warning" id="btn-skip">Skip Selected</button>
     <button class="btn btn-danger" id="btn-rollback" {% if not configured %}disabled{% endif %}>Rollback Selected</button>
+    <span class="controls-spacer"></span>
+    <a href="{{ url_for('export.export_csv', scope='aliases') }}" class="btn btn-small">Export CSV</a>
+    <a href="{{ url_for('export.export_pdf', scope='aliases') }}" class="btn btn-small">Export PDF</a>
 </div>
 
 <div id="dryrun-panel" class="dryrun-panel" style="display:none">

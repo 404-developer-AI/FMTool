@@ -40,6 +40,17 @@
 </div>
 
 {% if summary %}
+<div class="export-bar">
+    <div>
+        <strong>Migration Report</strong>
+        <span class="export-bar-hint">Export a snapshot of the full migration state</span>
+    </div>
+    <div class="export-actions">
+        <a href="{{ url_for('export.export_csv', scope='global') }}" class="btn btn-small">Export CSV</a>
+        <a href="{{ url_for('export.export_pdf', scope='global') }}" class="btn btn-small btn-primary">Export PDF</a>
+    </div>
+</div>
+
 <div class="category-overview">
     <h2>Configuration Overview</h2>
     <div class="category-grid">

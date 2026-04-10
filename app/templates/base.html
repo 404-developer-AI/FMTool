@@ -17,10 +17,20 @@
             <li><a href="{{ url_for('sophos.sophos_page') }}" class="{% if request.endpoint and request.endpoint.startswith('sophos.') %}active{% endif %}">Sophos</a></li>
             <li><a href="{{ url_for('upload.upload_page') }}" class="{% if request.endpoint and request.endpoint.startswith('upload.') %}active{% endif %}">Import</a></li>
             <li><a href="{{ url_for('activity_log.activity_log_page') }}" class="{% if request.endpoint and request.endpoint.startswith('activity_log.') %}active{% endif %}">Activity Log</a></li>
+            <li><a href="{{ url_for('settings.report_settings_page') }}" class="{% if request.endpoint and request.endpoint.startswith('settings.') %}active{% endif %}">Settings</a></li>
         </ul>
     </nav>
 
     <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for category, message in messages %}
+                        <div class="flash flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
         {% block content %}{% endblock %}
     </main>
 
