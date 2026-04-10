@@ -35,7 +35,8 @@ function Get-PythonCommand {
         $exe = $parts[0]
         if (Test-Command $exe) {
             try {
-                $versionOutput = & $exe $parts[1..($parts.Length-1)] --version 2>&1
+                $extraArgs = if ($parts.Length -gt 1) { $parts[1..($parts.Length-1)] } else { @() }
+                $versionOutput = & $exe @extraArgs --version 2>&1
                 if ($versionOutput -match "Python\s+(\d+)\.(\d+)\.(\d+)") {
                     $major = [int]$Matches[1]
                     $minor = [int]$Matches[2]
@@ -59,7 +60,7 @@ Write-Step "Checking prerequisites"
 
 if (-not (Test-Command "git")) {
     Write-Err2 "git not found. Install Git for Windows: https://git-scm.com/download/win"
-    exit 1
+    throw "git is required but was not found in PATH"
 }
 Write-Ok "git found"
 
@@ -67,7 +68,7 @@ $py = Get-PythonCommand
 if (-not $py) {
     Write-Err2 "Python $MinPyMajor.$MinPyMinor+ not found. Install from https://www.python.org/downloads/windows/"
     Write-Err2 "Make sure to tick 'Add Python to PATH' during installation."
-    exit 1
+    throw "Python $MinPyMajor.$MinPyMinor+ is required but was not found"
 }
 Write-Ok "Python $($py.Version) found ($($py.Command))"
 
@@ -87,7 +88,7 @@ if (Test-Path $targetDir) {
         }
     } else {
         Write-Err2 "Directory exists and is not an FMTool checkout: $targetDir"
-        exit 1
+        throw "Target directory already exists and is not an FMTool checkout"
     }
 } else {
     Write-Step "Cloning repository"
@@ -101,7 +102,8 @@ Set-Location $targetDir
 Write-Step "Creating virtual environment"
 if (-not (Test-Path "venv")) {
     $pyParts = $py.Command -split " "
-    & $pyParts[0] $pyParts[1..($pyParts.Length-1)] -m venv venv
+    $pyExtra = if ($pyParts.Length -gt 1) { $pyParts[1..($pyParts.Length-1)] } else { @() }
+    & $pyParts[0] @pyExtra -m venv venv
     Write-Ok "venv created"
 } else {
     Write-Ok "venv already present"
@@ -110,7 +112,7 @@ if (-not (Test-Path "venv")) {
 $venvPython = Join-Path $targetDir "venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
     Write-Err2 "venv python not found at $venvPython"
-    exit 1
+    throw "virtualenv creation failed"
 }
 
 # --- 4. Install dependencies ------------------------------------------------
